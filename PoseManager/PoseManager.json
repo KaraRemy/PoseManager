@@ -1,0 +1,18 @@
+{
+  "Author": "Tomok",
+  "Name": "Pose Manager",
+  "Punchline": "Organize, browse, and preview pose presets.",
+  "Description": "A manager solution for organizing pose presets inside FFXIV, with an interactive 3D skeleton mannequin and full-screen preview viewer.",
+  "ApplicableVersion": "any",
+  "RepoUrl": "https://github.com/KaraRemy/PoseManager",
+  "Tags": [
+    "gpose",
+    "preset",
+    "manager",
+    "skeleton",
+    "preview"
+  ],
+  "DalamudApiLevel": 15,
+  "Version": "0.1.0.0",
+  "IconUrl": "https://raw.githubusercontent.com/KaraRemy/TomokPlugins/main/PoseManager/icon.png"
+}
