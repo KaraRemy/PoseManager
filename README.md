@@ -1,14 +1,17 @@
-# PoseManager
+# Pose Manager
 
-An interactive companion plugin for FINAL FANTASY XIV (Dalamud) for organizing, previewing, and applying character poses seamlessly.
+Pose Manager is a companion plugin for FINAL FANTASY XIV (Dalamud) designed to organize, preview, and apply character pose presets. It provides a local preview window to view, align, and organize your poses before loading them in-game.
 
 ---
 
 ## Features
 
-- **Interactive 3D Viewport**: Built-in 3D mannequin renderer allowing you to inspect poses from any angle before applying them.
-- **Brio Integration**: Direct integration to apply poses cleanly into Brio.
-- **Preset Organizer**: Organize your pose presets with easy navigation.
+- **3D Viewport Mannequin**: A 3D skeletal wireframe representation of character poses with camera orbit, zoom, and pan controls.
+- **Depth Shading**: Fades distant joints and limbs based on depth relative to the pelvis, ensuring consistent wireframe rendering during camera rotation.
+- **Auto-Framing & Centering**: Automatically adjusts the camera target and zoom to fit the character bounds, supporting standing, crouching, or lying poses.
+- **Brio Library Integration**: Embeds a preview pane into Brio's Import window, syncing auto-focus, auto-reset, auto-framing, and fading intensity settings.
+- **Windows Explorer Shortcut**: Right-click folders, pose files, or preview images inside the browser tree to open the path and highlight the file in Windows Explorer.
+- **Preset Organizer**: Tree-based file browser supporting tag management, folder searches, and file organization.
 
 ---
 
