@@ -232,12 +232,63 @@ public class BrioIntegration : IDisposable
                     actorInstance.Pose = pose;
 
                     // Set initial offsets
-                    var diffPos = pose.ModelDifference.Position;
-                    var diffRot = pose.ModelDifference.Rotation;
-                    var euler = QuaternionToEuler(diffRot);
+                    if (plugin.Configuration.AutoResetOffsetOnLoad)
+                    {
+                        actorInstance.OffsetPosition = Vector3.Zero;
+                        actorInstance.OffsetRotationEuler = Vector3.Zero;
+                    }
+                    else
+                    {
+                        var diffPos = pose.ModelDifference.Position;
+                        var diffRot = pose.ModelDifference.Rotation;
+                        var euler = QuaternionToEuler(diffRot);
 
-                    actorInstance.OffsetPosition = diffPos;
-                    actorInstance.OffsetRotationEuler = euler * (float)(180.0 / Math.PI);
+                        actorInstance.OffsetPosition = diffPos;
+                        actorInstance.OffsetRotationEuler = euler * (float)(180.0 / Math.PI);
+                    }
+
+                    // Auto-Frame or Auto-Focus Brio Preview Camera
+                    if (plugin.Configuration.AutoFramePoseOnLoad)
+                    {
+                        Vector3 pelvisPos = Vector3.Zero;
+                        if (pose.Bones.TryGetValue("j_kosi", out var pelvisBone))
+                        {
+                            pelvisPos = pelvisBone.Position;
+                        }
+
+                        Vector3 minBound = new Vector3(float.MaxValue);
+                        Vector3 maxBound = new Vector3(float.MinValue);
+                        foreach (var bone in pose.Bones.Values)
+                        {
+                            var localPos = bone.Position - pelvisPos;
+                            minBound = Vector3.Min(minBound, localPos);
+                            maxBound = Vector3.Max(maxBound, localPos);
+                        }
+
+                        if (pose.Bones.Count > 0)
+                        {
+                            Vector3 center = (minBound + maxBound) * 0.5f;
+
+                            float radius = 0.1f;
+                            foreach (var bone in pose.Bones.Values)
+                            {
+                                var localPos = bone.Position - pelvisPos;
+                                float dist = Vector3.Distance(localPos, center);
+                                if (dist > radius) radius = dist;
+                            }
+
+                            float halfFovRad = (float)(camera.Fov * 0.5f * Math.PI / 180.0);
+                            float tanHalfFov = (float)Math.Tan(halfFovRad);
+                            float targetZoom = (radius * 1.25f) / tanHalfFov;
+
+                            camera.Target = actorInstance.OffsetPosition + center;
+                            camera.Zoom = Math.Clamp(targetZoom, 1.0f, 6.0f);
+                        }
+                    }
+                    else if (plugin.Configuration.AutoFocusCameraOnLoad)
+                    {
+                        camera.Target = actorInstance.OffsetPosition + new Vector3(0, 0.7f, 0);
+                    }
                     
                     lastLoadedPath = path;
                 }
@@ -303,6 +354,7 @@ public class BrioIntegration : IDisposable
         {
             ShowGrid = plugin.Configuration.ShowGrid,
             EnableDepthShading = plugin.Configuration.EnableDepthShading,
+            DepthFadeIntensity = plugin.Configuration.DepthFadeIntensity,
             SkeletonColor = plugin.Configuration.SkeletonColor,
             JointSize = plugin.Configuration.JointSize * plugin.Configuration.BrioMannequinScale,
             LimbThickness = plugin.Configuration.LimbThickness * plugin.Configuration.BrioMannequinScale

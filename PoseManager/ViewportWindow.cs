@@ -396,6 +396,68 @@ public class ViewportWindow : Window, IDisposable
                                 {
                                     SaveSceneState();
                                 }
+
+                                bool showResetBtn = !config.AutoResetOffsetOnLoad;
+                                bool showFocusBtn = !config.AutoFocusCameraOnLoad && !config.AutoFramePoseOnLoad;
+
+                                if (showResetBtn || showFocusBtn)
+                                {
+                                    ImGui.Spacing();
+                                    float availWidth = ImGui.GetContentRegionAvail().X;
+
+                                    if (showResetBtn && showFocusBtn)
+                                    {
+                                        float btnWidth = (availWidth - 8f) * 0.5f;
+
+                                        if (ImGui.Button("Reset Offset", new Vector2(btnWidth, 0)))
+                                        {
+                                            actor.OffsetPosition = Vector3.Zero;
+                                            actor.OffsetRotationEuler = Vector3.Zero;
+                                            SaveSceneState();
+                                        }
+                                        if (ImGui.IsItemHovered())
+                                        {
+                                            ImGui.SetTooltip("Reset character position and rotation offset to zero.");
+                                        }
+
+                                        ImGui.SameLine();
+
+                                        if (ImGui.Button("Focus Camera", new Vector2(btnWidth, 0)))
+                                        {
+                                            camera.Target = actor.OffsetPosition + new Vector3(0, 0.7f, 0);
+                                            SaveSceneState();
+                                        }
+                                        if (ImGui.IsItemHovered())
+                                        {
+                                            ImGui.SetTooltip("Focus the viewport camera and grid on this character.");
+                                        }
+                                    }
+                                    else if (showResetBtn)
+                                    {
+                                        if (ImGui.Button("Reset Offset", new Vector2(availWidth, 0)))
+                                        {
+                                            actor.OffsetPosition = Vector3.Zero;
+                                            actor.OffsetRotationEuler = Vector3.Zero;
+                                            SaveSceneState();
+                                        }
+                                        if (ImGui.IsItemHovered())
+                                        {
+                                            ImGui.SetTooltip("Reset character position and rotation offset to zero.");
+                                        }
+                                    }
+                                    else if (showFocusBtn)
+                                    {
+                                        if (ImGui.Button("Focus Camera", new Vector2(availWidth, 0)))
+                                        {
+                                            camera.Target = actor.OffsetPosition + new Vector3(0, 0.7f, 0);
+                                            SaveSceneState();
+                                        }
+                                        if (ImGui.IsItemHovered())
+                                        {
+                                            ImGui.SetTooltip("Focus the viewport camera and grid on this character.");
+                                        }
+                                    }
+                                }
                             }
 
                             // Delete Actor button (always keep at least one actor)
@@ -506,13 +568,66 @@ public class ViewportWindow : Window, IDisposable
                 actor.FilePath = path;
                 actor.Pose = pose;
 
-                // Set initial offsets from ModelDifference if non-zero
-                var diffPos = pose.ModelDifference.Position;
-                var diffRot = pose.ModelDifference.Rotation;
-                var euler = QuaternionToEuler(diffRot);
+                var config = plugin.Configuration;
 
-                actor.OffsetPosition = diffPos;
-                actor.OffsetRotationEuler = euler * (float)(180.0 / Math.PI);
+                // Set initial offsets from ModelDifference if non-zero, or reset if AutoResetOffsetOnLoad is enabled
+                if (config.AutoResetOffsetOnLoad)
+                {
+                    actor.OffsetPosition = Vector3.Zero;
+                    actor.OffsetRotationEuler = Vector3.Zero;
+                }
+                else
+                {
+                    var diffPos = pose.ModelDifference.Position;
+                    var diffRot = pose.ModelDifference.Rotation;
+                    var euler = QuaternionToEuler(diffRot);
+
+                    actor.OffsetPosition = diffPos;
+                    actor.OffsetRotationEuler = euler * (float)(180.0 / Math.PI);
+                }
+
+                // Auto-Frame or Auto-Focus Camera
+                if (config.AutoFramePoseOnLoad)
+                {
+                    Vector3 pelvisPos = Vector3.Zero;
+                    if (pose.Bones.TryGetValue("j_kosi", out var pelvisBone))
+                    {
+                        pelvisPos = pelvisBone.Position;
+                    }
+
+                    Vector3 minBound = new Vector3(float.MaxValue);
+                    Vector3 maxBound = new Vector3(float.MinValue);
+                    foreach (var bone in pose.Bones.Values)
+                    {
+                        var localPos = bone.Position - pelvisPos;
+                        minBound = Vector3.Min(minBound, localPos);
+                        maxBound = Vector3.Max(maxBound, localPos);
+                    }
+
+                    if (pose.Bones.Count > 0)
+                    {
+                        Vector3 center = (minBound + maxBound) * 0.5f;
+                        
+                        float radius = 0.1f;
+                        foreach (var bone in pose.Bones.Values)
+                        {
+                            var localPos = bone.Position - pelvisPos;
+                            float dist = Vector3.Distance(localPos, center);
+                            if (dist > radius) radius = dist;
+                        }
+
+                        float halfFovRad = (float)(camera.Fov * 0.5f * Math.PI / 180.0);
+                        float tanHalfFov = (float)Math.Tan(halfFovRad);
+                        float targetZoom = (radius * 1.25f) / tanHalfFov;
+
+                        camera.Target = actor.OffsetPosition + center;
+                        camera.Zoom = Math.Clamp(targetZoom, 1.0f, 6.0f);
+                    }
+                }
+                else if (config.AutoFocusCameraOnLoad)
+                {
+                    camera.Target = actor.OffsetPosition + new Vector3(0, 0.7f, 0);
+                }
                 
                 SaveSceneState();
             }
@@ -927,6 +1042,13 @@ public class ViewportWindow : Window, IDisposable
                         }
                     }
                 }
+
+                ImGui.Separator();
+                if (ImGui.MenuItem("Show in Windows Explorer"))
+                {
+                    ShowInExplorer(node.FullPath);
+                }
+
                 ImGui.EndPopup();
             }
 
@@ -1162,6 +1284,12 @@ public class ViewportWindow : Window, IDisposable
                         deleteFileTarget = node.FullPath;
                         openDeleteFilePopup = true;
                     }
+                }
+
+                ImGui.Separator();
+                if (ImGui.MenuItem("Show in Windows Explorer"))
+                {
+                    ShowInExplorer(node.FullPath);
                 }
 
                 ImGui.EndPopup();
@@ -2553,6 +2681,60 @@ public class ViewportWindow : Window, IDisposable
             ImGui.SetTooltip("Toggle Ground Grid");
         }
 
+        ImGui.SameLine();
+
+        // Toggle Auto-Focus on Load button
+        bool autoFocus = config.AutoFocusCameraOnLoad;
+        if (autoFocus) ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.4f, 0.8f));
+        ImGui.PushFont(UiBuilder.IconFont);
+        if (ImGui.Button(FontAwesomeIcon.Crosshairs.ToIconString(), new Vector2(iconSize, iconSize)))
+        {
+            config.AutoFocusCameraOnLoad = !config.AutoFocusCameraOnLoad;
+            config.Save();
+        }
+        ImGui.PopFont();
+        if (autoFocus) ImGui.PopStyleColor();
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(autoFocus ? "Auto-Focus Camera on Pose Load: Enabled" : "Auto-Focus Camera on Pose Load: Disabled");
+        }
+
+        ImGui.SameLine();
+
+        // Toggle Auto-Reset Offset on Load button
+        bool autoReset = config.AutoResetOffsetOnLoad;
+        if (autoReset) ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.4f, 0.8f));
+        ImGui.PushFont(UiBuilder.IconFont);
+        if (ImGui.Button(FontAwesomeIcon.Undo.ToIconString(), new Vector2(iconSize, iconSize)))
+        {
+            config.AutoResetOffsetOnLoad = !config.AutoResetOffsetOnLoad;
+            config.Save();
+        }
+        ImGui.PopFont();
+        if (autoReset) ImGui.PopStyleColor();
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(autoReset ? "Auto-Reset Offset on Pose Load: Enabled" : "Auto-Reset Offset on Pose Load: Disabled");
+        }
+
+        ImGui.SameLine();
+
+        // Toggle Auto-Frame on Load button
+        bool autoFrame = config.AutoFramePoseOnLoad;
+        if (autoFrame) ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.4f, 0.8f));
+        ImGui.PushFont(UiBuilder.IconFont);
+        if (ImGui.Button(FontAwesomeIcon.Expand.ToIconString(), new Vector2(iconSize, iconSize)))
+        {
+            config.AutoFramePoseOnLoad = !config.AutoFramePoseOnLoad;
+            config.Save();
+        }
+        ImGui.PopFont();
+        if (autoFrame) ImGui.PopStyleColor();
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(autoFrame ? "Auto-Frame Pose on Load: Enabled" : "Auto-Frame Pose on Load: Disabled");
+        }
+
         ImGui.Spacing();
 
         var canvasStart = ImGui.GetCursorScreenPos();
@@ -2706,5 +2888,26 @@ public class ViewportWindow : Window, IDisposable
 
         drawList.AddImage(texture.Handle, min, max);
         drawList.AddRect(min, max, ImGui.ColorConvertFloat4ToU32(new Vector4(0.3f, 0.8f, 1f, 0.8f)), 0f, ImDrawFlags.None, 2f);
+    }
+
+    private void ShowInExplorer(string path)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            var fullPath = Path.GetFullPath(path);
+            if (Directory.Exists(fullPath))
+            {
+                System.Diagnostics.Process.Start("explorer.exe", $"\"{fullPath}\"");
+            }
+            else if (File.Exists(fullPath))
+            {
+                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{fullPath}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Error($"[PM] Failed to open path in explorer: {ex.Message}");
+        }
     }
 }

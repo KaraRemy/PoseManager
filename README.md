@@ -36,6 +36,14 @@ If you enjoy my work and would like to support plugin development, you can buy m
 
 ---
 
+## AI Disclosure / Collaboration Note
+
+> [!NOTE]
+> This plugin was co-authored, coded, and polished with the assistance of agentic AI coding assistants (Google DeepMind's Antigravity). All design aesthetics, custom 3D mannequin rendering, and robust pose serialization frameworks were developed through collaborative pair programming.
+
+---
+
 ## License
 
 This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE.md](./LICENSE.md) file for details.
+

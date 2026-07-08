@@ -94,10 +94,17 @@ public class SkeletonRenderer
             foreach (var actor in actors)
             {
                 if (actor.Pose == null) continue;
+
+                Vector3 pelvisPos = Vector3.Zero;
+                if (actor.Pose.Bones.TryGetValue("j_kosi", out var pelvisBone))
+                {
+                    pelvisPos = pelvisBone.Position;
+                }
+
                 foreach (var bone in actor.Pose.Bones.Values)
                 {
-                    // Look for foot/toe bones to determine ground offset
-                    var worldPos = actor.GetOffsetPosition(bone.Position);
+                    // Look for foot/toe bones to determine ground offset (relative to centered pelvis)
+                    var worldPos = actor.GetOffsetPosition(bone.Position - pelvisPos);
                     if (worldPos.Y < gridY)
                     {
                         gridY = worldPos.Y;
@@ -120,7 +127,7 @@ public class SkeletonRenderer
 
                 if (lineVisible)
                 {
-                    float fade = GetDepthFade(avgDepth, camera.Zoom, config.EnableDepthShading);
+                    float fade = GetDepthFade(avgDepth, camera.Zoom, 0.8f, 1.5f, config.DepthFadeIntensity, config.EnableDepthShading);
                     uint color = ImGui.ColorConvertFloat4ToU32(new Vector4(0.5f * fade, 0.5f * fade, 0.5f * fade, 0.35f * fade));
 
                     commandsList.Add(new GridLineCommand
@@ -142,7 +149,7 @@ public class SkeletonRenderer
 
                 if (lineVisible)
                 {
-                    float fade = GetDepthFade(avgDepth, camera.Zoom, config.EnableDepthShading);
+                    float fade = GetDepthFade(avgDepth, camera.Zoom, 0.8f, 1.5f, config.DepthFadeIntensity, config.EnableDepthShading);
                     uint color = ImGui.ColorConvertFloat4ToU32(new Vector4(0.5f * fade, 0.5f * fade, 0.5f * fade, 0.35f * fade));
 
                     commandsList.Add(new GridLineCommand
@@ -164,12 +171,36 @@ public class SkeletonRenderer
 
             var baseColor = actor.Color;
 
+            // Find pelvis position to subtract (to center the mannequin around pelvis)
+            Vector3 pelvisPos = Vector3.Zero;
+            if (actor.Pose.Bones.TryGetValue("j_kosi", out var pelvisBone))
+            {
+                pelvisPos = pelvisBone.Position;
+            }
+
             // Cache projected screen coordinates and depths of all loaded bones into reusable buffer
             projectedBonesBuffer.Clear();
             foreach (var kp in actor.Pose.Bones)
             {
-                var worldPos = actor.GetOffsetPosition(kp.Value.Position);
+                // Subtract pelvis position to align pelvis root at (0,0,0) locally
+                var worldPos = actor.GetOffsetPosition(kp.Value.Position - pelvisPos);
                 projectedBonesBuffer[kp.Key] = camera.Project(worldPos);
+            }
+
+            // Determine reference depth for this actor relative to its pelvis or average bone position
+            float actorReferenceDepth = camera.Zoom;
+            if (projectedBonesBuffer.TryGetValue("j_kosi", out var pelvisProj))
+            {
+                actorReferenceDepth = pelvisProj.depth;
+            }
+            else if (projectedBonesBuffer.Count > 0)
+            {
+                float sum = 0f;
+                foreach (var kp in projectedBonesBuffer)
+                {
+                    sum += kp.Value.depth;
+                }
+                actorReferenceDepth = sum / projectedBonesBuffer.Count;
             }
 
             // Generate Limb (Stretched Ellipse) Commands
@@ -181,12 +212,13 @@ public class SkeletonRenderer
                     if (parentProj.visible && childProj.visible)
                     {
                         float avgDepth = (parentProj.depth + childProj.depth) * 0.5f;
-                        float fade = GetDepthFade(avgDepth, camera.Zoom, config.EnableDepthShading);
+                        float fade = GetDepthFade(avgDepth, actorReferenceDepth, 0.4f, 0.6f, config.DepthFadeIntensity, config.EnableDepthShading);
 
-                        // Perspective thickness scaling (closer is thicker)
-                        float baseThick = 6.0f * config.LimbThickness * connection.ThicknessMultiplier;
-                        float rParent = Math.Clamp(baseThick / parentProj.depth, 1.0f, 40.0f);
-                        float rChild = Math.Clamp(baseThick / childProj.depth, 1.0f, 40.0f);
+                        // Perspective thickness scaling (closer is thicker), scaled by canvas height to maintain proportions
+                        float canvasScale = camera.CanvasSize.Y / 500.0f;
+                        float baseThick = 6.0f * config.LimbThickness * connection.ThicknessMultiplier * canvasScale;
+                        float rParent = Math.Clamp(baseThick / parentProj.depth, 1.0f * canvasScale, 40.0f * canvasScale);
+                        float rChild = Math.Clamp(baseThick / childProj.depth, 1.0f * canvasScale, 40.0f * canvasScale);
 
                         uint color = ImGui.ColorConvertFloat4ToU32(new Vector4(baseColor.X * fade, baseColor.Y * fade, baseColor.Z * fade, 0.85f * fade));
                         uint outlineColor = ImGui.ColorConvertFloat4ToU32(new Vector4(baseColor.X * 0.4f * fade, baseColor.Y * 0.4f * fade, baseColor.Z * 0.4f * fade, 0.95f * fade));
@@ -221,12 +253,13 @@ public class SkeletonRenderer
 
                 if (isMannequinJoint && kp.Value.visible)
                 {
-                    float fade = GetDepthFade(kp.Value.depth, camera.Zoom, config.EnableDepthShading);
+                    float fade = GetDepthFade(kp.Value.depth, actorReferenceDepth, 0.4f, 0.6f, config.DepthFadeIntensity, config.EnableDepthShading);
                     
-                    // Extra size for the head
+                    // Extra size for the head, scaled by canvas height to maintain proportions
+                    float canvasScale = camera.CanvasSize.Y / 500.0f;
                     float sizeMultiplier = (kp.Key == "j_kao") ? 6.6f : 1.0f;
-                    float baseRadius = 8.0f * config.JointSize * sizeMultiplier;
-                    float radius = Math.Clamp(baseRadius / kp.Value.depth, 1.0f, 50.0f);
+                    float baseRadius = 8.0f * config.JointSize * sizeMultiplier * canvasScale;
+                    float radius = Math.Clamp(baseRadius / kp.Value.depth, 1.0f * canvasScale, 50.0f * canvasScale);
 
                     uint color = ImGui.ColorConvertFloat4ToU32(new Vector4(baseColor.X * 1.1f * fade, baseColor.Y * 1.1f * fade, baseColor.Z * 1.1f * fade, 0.95f * fade));
                     uint outlineColor = ImGui.ColorConvertFloat4ToU32(new Vector4(baseColor.X * 0.3f * fade, baseColor.Y * 0.3f * fade, baseColor.Z * 0.3f * fade, 0.95f * fade));
@@ -255,14 +288,13 @@ public class SkeletonRenderer
         drawList.PopClipRect();
     }
 
-    private static float GetDepthFade(float depth, float zoom, bool enabled)
+    private static float GetDepthFade(float depth, float referenceDepth, float rangeBefore, float rangeAfter, float intensity, bool enabled)
     {
         if (!enabled) return 1.0f;
-        // Fog/fade maps from Zoom - 1.0 (fully lit) to Zoom + 1.2 (faded out)
-        float start = zoom - 0.8f;
-        float end = zoom + 1.5f;
+        float start = referenceDepth - rangeBefore;
+        float end = referenceDepth + rangeAfter;
         float t = (depth - start) / (end - start);
-        return 1.0f - Math.Clamp(t, 0.0f, 0.65f); // Floor opacity at 0.35f
+        return 1.0f - Math.Clamp(t, 0.0f, intensity);
     }
 
     private static (Vector2 Start, Vector2 End, float AvgDepth, bool Visible) ProjectLine(Camera camera, Vector3 a, Vector3 b)

@@ -33,8 +33,12 @@ public class Configuration : IPluginConfiguration
     public float JointSize { get; set; } = 1.0f;
     public float LimbThickness { get; set; } = 3.0f;
     public bool EnableDepthShading { get; set; } = true;
+    public float DepthFadeIntensity { get; set; } = 0.65f;
     public float CameraSensitivity { get; set; } = 1.0f;
     public System.Numerics.Vector3 SkeletonColor { get; set; } = new System.Numerics.Vector3(0.2f, 0.8f, 0.9f);
+    public bool AutoFocusCameraOnLoad { get; set; } = false;
+    public bool AutoResetOffsetOnLoad { get; set; } = false;
+    public bool AutoFramePoseOnLoad { get; set; } = false;
 
     // Brio Integration
     public bool BrioLibraryIntegration { get; set; } = true;

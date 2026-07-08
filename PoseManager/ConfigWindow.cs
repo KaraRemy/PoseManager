@@ -12,11 +12,16 @@ public class ConfigWindow : Window, IDisposable
 
     public ConfigWindow(Plugin plugin) : base("Pose Manager Settings###PoseManagerConfigWindow")
     {
-        Flags = ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar |
-                ImGuiWindowFlags.NoScrollWithMouse;
+        Flags = ImGuiWindowFlags.NoCollapse;
 
         Size = new Vector2(400, 580);
         SizeCondition = ImGuiCond.FirstUseEver;
+
+        SizeConstraints = new WindowSizeConstraints
+        {
+            MinimumSize = new Vector2(400, 300),
+            MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
+        };
 
         this.plugin = plugin;
         this.configuration = plugin.Configuration;
@@ -42,6 +47,20 @@ public class ConfigWindow : Window, IDisposable
         {
             configuration.EnableDepthShading = depthShading;
             configuration.Save();
+        }
+
+        if (depthShading)
+        {
+            ImGui.Indent(10f);
+            float depthIntensity = configuration.DepthFadeIntensity;
+            ImGui.Text("Fading Intensity:");
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##DepthIntensity", ref depthIntensity, 0.0f, 1.0f, "%.2f"))
+            {
+                configuration.DepthFadeIntensity = depthIntensity;
+                configuration.Save();
+            }
+            ImGui.Unindent(10f);
         }
 
         bool showMetadata = configuration.ShowSceneOverviewMetadata;
