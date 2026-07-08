@@ -12,17 +12,17 @@ An interactive companion plugin for FINAL FANTASY XIV (Dalamud) for organizing, 
 
 ---
 
-## Installation (Testing / Beta Track)
+## Installation
 
-PoseManager is currently in **Beta Testing**. To install and test PoseManager using the custom repository:
+To install Pose Manager using the custom repository:
 
 1. Launch FINAL FANTASY XIV and open Dalamud Settings using `/xlsettings` in chat.
 2. Navigate to the **Experimental** tab.
-3. Under **Custom Plugin Repositories**, ensure the repository URL is added:
+3. Under **Custom Plugin Repositories**, add the repository URL:
    `https://raw.githubusercontent.com/KaraRemy/TomokPlugins/main/pluginmaster.json`
-4. In Dalamud plugin settings, enable **"Get testing plugin builds"** (or check "Show Testing Plugins").
+4. Click **Save and Close**.
 5. Open the Plugin Installer using `/xlplugins` in chat.
-6. Search for **PoseManager** (tagged as Testing) and click **Install**!
+6. Search for **Pose Manager** and click **Install**!
 
 ---
 
