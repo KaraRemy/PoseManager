@@ -1214,7 +1214,8 @@ public class ViewportWindow : Window, IDisposable
 
                     bool inGPose = Plugin.ClientState.IsGPosing;
                     var brioActors = inGPose ? BrioReflectionHelper.GetBrioActors() : new List<BrioReflectionHelper.BrioActorTarget>();
-                    bool canApply = inGPose && brioActors.Count > 0;
+                    bool isCmpFile = ext == ".cmp";
+                    bool canApply = !isCmpFile && inGPose && brioActors.Count > 0;
 
                     if (ImGui.BeginMenu("Apply to Brio Actor", canApply))
                     {
@@ -1241,7 +1242,10 @@ public class ViewportWindow : Window, IDisposable
                     }
                     if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !canApply)
                     {
-                        ImGui.SetTooltip(!inGPose ? "Requires active GPose mode." : "No active actors found in Brio.");
+                        string tooltipStr = isCmpFile
+                            ? ".cmp pose files are unsupported for Brio import. Use Brio Pose Import."
+                            : (!inGPose ? "Requires active GPose mode." : "No active actors found in Brio.");
+                        ImGui.SetTooltip(tooltipStr);
                     }
                 }
 
@@ -1491,7 +1495,7 @@ public class ViewportWindow : Window, IDisposable
 
             ImGui.Spacing();
 
-            string infoStr = "This pose uses the Concept Matrix (.cmp) format. While 3D wireframe preview is not supported for raw .cmp files, you can apply it directly to your character in GPose via Brio!";
+            string infoStr = "This pose uses the legacy Concept Matrix (.cmp) format. Importing .cmp files directly into Brio is disabled as it causes character model distortion. Use Brio Pose Import.";
             ImGui.TextWrapped(infoStr);
 
             ImGui.Spacing();
@@ -1499,7 +1503,7 @@ public class ViewportWindow : Window, IDisposable
 
             bool inGPose = Plugin.ClientState.IsGPosing;
             var brioActors = inGPose ? BrioReflectionHelper.GetBrioActors() : new List<BrioReflectionHelper.BrioActorTarget>();
-            bool canApply = inGPose && brioActors.Count > 0;
+            bool canApply = false;
 
             float btnW = 220f;
             ImGui.SetCursorPosX((childW - btnW) * 0.5f);
@@ -1529,7 +1533,7 @@ public class ViewportWindow : Window, IDisposable
             }
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !canApply)
             {
-                ImGui.SetTooltip(!inGPose ? "Requires active GPose mode." : "No active actors found in Brio.");
+                ImGui.SetTooltip(".cmp pose files are unsupported for Brio import. Use Brio Pose Import.");
             }
 
             ImGui.EndChild();

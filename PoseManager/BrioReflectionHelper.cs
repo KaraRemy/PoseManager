@@ -30,7 +30,6 @@ public static class BrioReflectionHelper
     private static PropertyInfo? actorCapabilitiesProp;
 
     private static bool initialized = false;
-    private static bool failed = false;
 
     public class BrioActorTarget
     {
@@ -41,7 +40,7 @@ public static class BrioReflectionHelper
 
     public static void Initialize()
     {
-        if (initialized || failed) return;
+        if (initialized) return;
 
         try
         {
@@ -52,16 +51,12 @@ public static class BrioReflectionHelper
             brioType = brioAssembly.GetType("Brio.Brio");
             if (brioType == null)
             {
-                Plugin.Log.Warning("[PM] Brio.Brio type not found.");
-                failed = true;
                 return;
             }
 
             servicesField = brioType.GetField("_services", BindingFlags.NonPublic | BindingFlags.Static);
             if (servicesField == null)
             {
-                Plugin.Log.Warning("[PM] Brio._services static field not found.");
-                failed = true;
                 return;
             }
 
@@ -100,13 +95,15 @@ public static class BrioReflectionHelper
                 actorCapabilitiesProp = actorEntityType.GetProperty("Capabilities", BindingFlags.Public | BindingFlags.Instance);
             }
 
-            initialized = true;
-            Plugin.Log.Information("[PM] Brio selection reflection initialized successfully.");
+            if (servicesField != null && entityManagerType != null && entityMapField != null)
+            {
+                initialized = true;
+                Plugin.Log.Information("[PM] Brio selection reflection initialized successfully.");
+            }
         }
         catch (Exception ex)
         {
-            Plugin.Log.Error($"[PM] Failed to initialize Brio selection reflection: {ex}");
-            failed = true;
+            Plugin.Log.Debug($"[PM] Brio selection reflection initialization deferred: {ex.Message}");
         }
     }
 
@@ -114,7 +111,7 @@ public static class BrioReflectionHelper
     {
         var list = new List<BrioActorTarget>();
         Initialize();
-        if (!initialized || failed || servicesField == null || entityManagerType == null || entityMapField == null)
+        if (!initialized || servicesField == null || entityManagerType == null || entityMapField == null)
             return list;
 
         try
@@ -176,6 +173,12 @@ public static class BrioReflectionHelper
     {
         Initialize();
         if (brioAssembly == null || posingCapObj == null || string.IsNullOrEmpty(poseFilePath) || !File.Exists(poseFilePath)) return false;
+
+        if (poseFilePath.EndsWith(".cmp", StringComparison.OrdinalIgnoreCase))
+        {
+            Plugin.Log.Warning("[PM] Direct .cmp pose application to Brio actor is disabled.");
+            return false;
+        }
 
         try
         {
@@ -240,7 +243,7 @@ public static class BrioReflectionHelper
     {
         path = string.Empty;
         Initialize();
-        if (!initialized || failed || servicesField == null || uiManagerType == null || libraryWindowField == null) return false;
+        if (!initialized || servicesField == null || uiManagerType == null || libraryWindowField == null) return false;
 
         try
         {

@@ -2,10 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0.3] - 2026-08-13
+
+### Fixed
+- **Disabled .cmp Direct Brio Import**: Disabled "Apply to Brio Actor" for legacy Concept Matrix (`.cmp`) files to prevent character model/bone distortion (turning into a ball). Added hover tooltips and info panel guidance directing users to "Use Brio Pose Import".
+- **Brio Reflection Initialization Retry**: Removed permanent `failed` lock in `BrioReflectionHelper` so reflection initialization retries dynamically if Brio was temporarily uninitialized or loaded after PoseManager.
+
 ## [0.1.0.2] - 2026-08-13
 
 ### Fixed
-- **Brio Apply Tooltip Hover**: Enabled `ImGuiHoveredFlags.AllowWhenDisabled` on the context menu's "Apply to Brio Actor" option so tooltips ("Requires active GPose mode" / "No active actors found in Brio") render properly when the menu item is greyed out.
+- **Brio Apply Tooltip Hover**: Enabled `ImGuiHoveredFlags.AllowWhenDisabled` on the context menu's "Apply to Brio Actor" option so tooltips render properly when the menu item is greyed out.
 
 ## [0.1.0.1] - 2026-07-08
 
