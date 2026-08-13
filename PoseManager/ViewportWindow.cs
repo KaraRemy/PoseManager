@@ -1239,7 +1239,7 @@ public class ViewportWindow : Window, IDisposable
                         }
                         ImGui.EndMenu();
                     }
-                    if (ImGui.IsItemHovered() && !canApply)
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !canApply)
                     {
                         ImGui.SetTooltip(!inGPose ? "Requires active GPose mode." : "No active actors found in Brio.");
                     }
@@ -1527,7 +1527,7 @@ public class ViewportWindow : Window, IDisposable
                 }
                 ImGui.EndMenu();
             }
-            if (ImGui.IsItemHovered() && !canApply)
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && !canApply)
             {
                 ImGui.SetTooltip(!inGPose ? "Requires active GPose mode." : "No active actors found in Brio.");
             }

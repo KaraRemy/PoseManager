@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0.2] - 2026-08-13
+
+### Fixed
+- **Brio Apply Tooltip Hover**: Enabled `ImGuiHoveredFlags.AllowWhenDisabled` on the context menu's "Apply to Brio Actor" option so tooltips ("Requires active GPose mode" / "No active actors found in Brio") render properly when the menu item is greyed out.
+
 ## [0.1.0.1] - 2026-07-08
 
 ### Added
