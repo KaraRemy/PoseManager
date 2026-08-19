@@ -29,7 +29,21 @@ public class ConfigWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    public override bool DrawConditions()
+    {
+        if (plugin.BrioIntegration != null && plugin.BrioIntegration.IsBrioWindowActive())
+        {
+            return false;
+        }
+        return base.DrawConditions();
+    }
+
     public override void Draw()
+    {
+        DrawSettingsBody();
+    }
+
+    public void DrawSettingsBody()
     {
         ImGui.TextColored(new Vector4(0.2f, 0.8f, 0.9f, 1.0f), "Viewport Settings");
         ImGui.Separator();
@@ -176,11 +190,15 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
 
         bool brioLibraryIntegration = configuration.BrioLibraryIntegration;
-        if (ImGui.Checkbox("Enable Brio \"Import Pose\" Mannequin", ref brioLibraryIntegration))
+        if (ImGui.Checkbox("Enable Brio Library & \"Import Pose\" Preview", ref brioLibraryIntegration))
         {
             configuration.BrioLibraryIntegration = brioLibraryIntegration;
             configuration.Save();
             plugin.BrioIntegration.UpdateHookState();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Renders the interactive 3D mannequin preview inside Brio's Library and \"Import Pose\" windows.");
         }
 
         if (brioLibraryIntegration)

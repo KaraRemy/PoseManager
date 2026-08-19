@@ -41,6 +41,7 @@ public class ViewportWindow : Window, IDisposable
     private readonly List<ActorInstance> actors = new();
     private BrowserNode? rootNode = null;
     private string scannedPath = string.Empty;
+    private bool isScanningFolder = false;
     private string selectedBrowserPosePath = string.Empty;
     private bool resetPopupOpen = true;
 
@@ -175,12 +176,16 @@ public class ViewportWindow : Window, IDisposable
             {
                 if (child.Success)
                 {
-                    if (string.IsNullOrWhiteSpace(scannedPath) || scannedPath != config.DefaultPosePath)
+                    if ((string.IsNullOrWhiteSpace(scannedPath) || scannedPath != config.DefaultPosePath) && !isScanningFolder)
                     {
                         ScanPoseFolder();
                     }
 
-                    if (rootNode != null)
+                    if (isScanningFolder)
+                    {
+                        ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1.0f), "Scanning folder structure...");
+                    }
+                    else if (rootNode != null)
                     {
                         UpdateCachedSearchQuery();
                         foreach (var childNode in rootNode.Children)
@@ -769,14 +774,35 @@ public class ViewportWindow : Window, IDisposable
         {
             rootNode = null;
             scannedPath = string.Empty;
+            isScanningFolder = false;
             return;
         }
 
-        rootNode = BuildTree(path);
-        scannedPath = path;
+        if (isScanningFolder) return;
+        isScanningFolder = true;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var node = BuildTreeSafe(path, visited, 0);
+                rootNode = node;
+                scannedPath = path;
+                StartBackgroundMetadataCache();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[PM] Error scanning pose directory {path}: {ex.Message}");
+            }
+            finally
+            {
+                isScanningFolder = false;
+            }
+        });
     }
 
-    private BrowserNode BuildTree(string path)
+    private BrowserNode BuildTreeSafe(string path, HashSet<string> visited, int depth)
     {
         var node = new BrowserNode
         {
@@ -785,26 +811,58 @@ public class ViewportWindow : Window, IDisposable
             IsDirectory = true
         };
 
+        const int maxDepth = 12;
+        if (depth > maxDepth)
+        {
+            return node;
+        }
+
         try
         {
+            string canonicalPath;
+            try
+            {
+                canonicalPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch
+            {
+                canonicalPath = path;
+            }
+
+            if (!visited.Add(canonicalPath))
+            {
+                return node;
+            }
+
             foreach (var dir in Directory.GetDirectories(path))
             {
-                node.Children.Add(BuildTree(dir));
+                try
+                {
+                    node.Children.Add(BuildTreeSafe(dir, visited, depth + 1));
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Debug($"[PM] Error scanning subfolder {dir}: {ex.Message}");
+                }
             }
 
             var files = Directory.GetFiles(path);
             foreach (var file in files)
             {
-                var ext = Path.GetExtension(file).ToLowerInvariant();
-                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".pose" || ext == ".cmp")
+                try
                 {
-                    node.Children.Add(new BrowserNode
+                    var ext = Path.GetExtension(file).ToLowerInvariant();
+                    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".pose" || ext == ".cmp")
                     {
-                        Name = Path.GetFileName(file),
-                        FullPath = file,
-                        IsDirectory = false
-                    });
+                        node.Children.Add(new BrowserNode
+                        {
+                            Name = Path.GetFileName(file),
+                            FullPath = file,
+                            IsDirectory = false
+                        });
+                    }
                 }
+                catch { }
             }
         }
         catch (Exception ex)

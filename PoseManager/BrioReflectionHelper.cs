@@ -239,9 +239,41 @@ public static class BrioReflectionHelper
         return false;
     }
 
-    public static bool TryGetSelectedPosePath(out string path)
+    public static bool IsBrioModalOpen()
+    {
+        Initialize();
+        if (!initialized || servicesField == null || uiManagerType == null || libraryWindowField == null) return false;
+
+        try
+        {
+            var services = servicesField.GetValue(null) as IServiceProvider;
+            if (services == null) return false;
+
+            var uiManager = services.GetService(uiManagerType!);
+            if (uiManager == null) return false;
+
+            var libraryWindow = libraryWindowField!.GetValue(uiManager);
+            if (libraryWindow == null) return false;
+
+            var isOpenProp = libraryWindow.GetType().GetProperty("IsOpen", BindingFlags.Public | BindingFlags.Instance);
+            if (isOpenProp == null) return false;
+            bool isOpen = (bool)isOpenProp.GetValue(libraryWindow)!;
+            if (!isOpen) return false;
+
+            return isModalField != null && (bool)isModalField.GetValue(libraryWindow)!;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static bool TryGetSelectedPosePath(out string path) => TryGetSelectedPosePath(out path, out _);
+
+    public static bool TryGetSelectedPosePath(out string path, out bool isModal)
     {
         path = string.Empty;
+        isModal = false;
         Initialize();
         if (!initialized || servicesField == null || uiManagerType == null || libraryWindowField == null) return false;
 
@@ -262,17 +294,17 @@ public static class BrioReflectionHelper
             bool isOpen = (bool)isOpenProp.GetValue(libraryWindow)!;
             if (!isOpen) return false;
 
-            // Check if it is modal
-            bool isModal = isModalField != null && (bool)isModalField.GetValue(libraryWindow)!;
-            if (!isModal) return false;
-
-            // Check if modal filter is Poses
-            if (modalFilterField != null && filterNameProp != null)
+            // If in modal mode, check if modal filter is Poses
+            isModal = isModalField != null && (bool)isModalField.GetValue(libraryWindow)!;
+            if (isModal)
             {
-                var filter = modalFilterField.GetValue(libraryWindow);
-                if (filter == null) return false;
-                var filterName = filterNameProp.GetValue(filter) as string;
-                if (filterName != "Poses") return false;
+                if (modalFilterField != null && filterNameProp != null)
+                {
+                    var filter = modalFilterField.GetValue(libraryWindow);
+                    if (filter == null) return false;
+                    var filterName = filterNameProp.GetValue(filter) as string;
+                    if (filterName != "Poses") return false;
+                }
             }
 
             // Get selected entry
@@ -298,6 +330,147 @@ public static class BrioReflectionHelper
             if (ImGui.GetFrameCount() % 3600 == 0)
             {
                 Plugin.Log.Warning($"[PM] Reflection error in TryGetSelectedPosePath: {ex.Message}");
+            }
+        }
+
+        return false;
+    }
+
+    private static FieldInfo? fileDialogManagerField;
+
+    public static bool TryGetSelectedPosePathFromFileDialog(out string path)
+    {
+        path = string.Empty;
+        Initialize();
+        if (!initialized || servicesField == null || uiManagerType == null) return false;
+
+        try
+        {
+            var services = servicesField.GetValue(null) as IServiceProvider;
+            if (services == null) return false;
+
+            var uiManager = services.GetService(uiManagerType!);
+            if (uiManager == null) return false;
+
+            if (fileDialogManagerField == null)
+            {
+                fileDialogManagerField = uiManagerType.GetField("FileDialogManager", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+
+            if (fileDialogManagerField == null) return false;
+            var fdm = fileDialogManagerField.GetValue(uiManager);
+            if (fdm == null) return false;
+
+            // In FileDialogManager, find dialog field
+            var dialogField = fdm.GetType().GetField("dialog", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (dialogField == null) return false;
+            var dialog = dialogField.GetValue(fdm);
+            if (dialog == null) return false;
+
+            var dialogType = dialog.GetType();
+
+            // Try methods: GetFilePathName(), GetFilePathNameWithExt(), GetSelected()
+            var getFilePathNameMethod = dialogType.GetMethod("GetFilePathName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (getFilePathNameMethod != null)
+            {
+                var res = getFilePathNameMethod.Invoke(dialog, null) as string;
+                if (!string.IsNullOrEmpty(res) && res.EndsWith(".pose", StringComparison.OrdinalIgnoreCase) && File.Exists(res))
+                {
+                    path = res;
+                    return true;
+                }
+            }
+
+            // Try properties / fields: CurrentPath + SelectedFileName / fileNameBuffer
+            string? currentDir = null;
+            var getCurrentPathMethod = dialogType.GetMethod("GetCurrentPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (getCurrentPathMethod != null)
+            {
+                currentDir = getCurrentPathMethod.Invoke(dialog, null) as string;
+            }
+            if (string.IsNullOrEmpty(currentDir))
+            {
+                var curPathProp = dialogType.GetProperty("CurrentPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) ??
+                                  dialogType.GetProperty("Path", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (curPathProp != null)
+                {
+                    currentDir = curPathProp.GetValue(dialog) as string;
+                }
+            }
+
+            string? selectedFile = null;
+            var getFileNameMethod = dialogType.GetMethod("GetFileName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (getFileNameMethod != null)
+            {
+                selectedFile = getFileNameMethod.Invoke(dialog, null) as string;
+            }
+
+            if (string.IsNullOrEmpty(selectedFile))
+            {
+                var fileNameField = dialogType.GetField("selectedFileName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) ??
+                                    dialogType.GetField("fileName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) ??
+                                    dialogType.GetField("fileNameBuffer", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) ??
+                                    dialogType.GetField("SelectedFileName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (fileNameField != null)
+                {
+                    selectedFile = fileNameField.GetValue(dialog) as string;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(selectedFile) && selectedFile.EndsWith(".pose", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrEmpty(currentDir))
+                {
+                    var combined = Path.Combine(currentDir, selectedFile);
+                    if (File.Exists(combined))
+                    {
+                        path = combined;
+                        return true;
+                    }
+                }
+                if (File.Exists(selectedFile))
+                {
+                    path = selectedFile;
+                    return true;
+                }
+            }
+
+            // Try SelectedFiles / selectedFiles (collection)
+            var selFilesProp = dialogType.GetProperty("SelectedFiles", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) ??
+                               dialogType.GetProperty("Selections", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (selFilesProp != null)
+            {
+                var filesObj = selFilesProp.GetValue(dialog);
+                if (filesObj is IEnumerable<string> list && list.Any())
+                {
+                    var first = list.First();
+                    if (!string.IsNullOrEmpty(first) && first.EndsWith(".pose", StringComparison.OrdinalIgnoreCase) && File.Exists(first))
+                    {
+                        path = first;
+                        return true;
+                    }
+                }
+            }
+
+            // Try inspecting all string fields of dialog
+            foreach (var f in dialogType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                if (f.FieldType == typeof(string))
+                {
+                    var val = f.GetValue(dialog) as string;
+                    if (!string.IsNullOrEmpty(val) && val.EndsWith(".pose", StringComparison.OrdinalIgnoreCase) && File.Exists(val))
+                    {
+                        path = val;
+                        return true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ImGui.GetFrameCount() % 3600 == 0)
+            {
+                Plugin.Log.Debug($"[PM] TryGetSelectedPosePathFromFileDialog error: {ex.Message}");
             }
         }
 

@@ -21,7 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     public Configuration Configuration { get; init; }
     public readonly WindowSystem WindowSystem = new("PoseManager");
     private ViewportWindow ViewportWindow { get; init; }
-    private ConfigWindow ConfigWindow { get; init; }
+    public ConfigWindow ConfigWindow { get; init; }
     public FileDialogManager FileDialogManager { get; } = new();
     public BrioIntegration BrioIntegration { get; }
 

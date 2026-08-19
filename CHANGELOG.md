@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0.5] - 2026-08-19
+
+### Fixed
+- **Game Freeze on Startup / Directory Scan**: Moved folder structure scanning to an asynchronous background task (`Task.Run`), preventing game freezes when opening `/posemanager` or loading large pose folders.
+- **Linux / Proton Symlink Loop Crash**: Added canonical path tracking (`visited` HashSet) and recursion depth limits to prevent infinite recursion loops caused by Wine drive mappings (e.g. `Z:\` / `dosdevices` loops).
+- **Cross-Platform Default Path**: Changed default pose directory from hardcoded `D:\...` to dynamic user `MyDocuments/Brio/Poses` directory, avoiding OS I/O timeouts on systems without a `D:` drive.
+- **Native ImGui Pointer Safety**: Capped string reads in `GetUtf8String` to 512 bytes with exception handling to prevent infinite loops on corrupt or non-null-terminated native pointers.
+
+## [0.1.0.4] - 2026-08-19
+
+### Added
+- **Brio Standalone Library Support**: Expanded 3D mannequin pose preview from modal-only ("Import Pose -> From File") to also support the standalone Brio Library window.
+- **Brio File Browser Preview**: Added preview support for Brio's "Browse for File" dialogs (`Import Poses`), automatically attaching a live 3D mannequin preview snapped to the file browser.
+- **Smart Screen-Boundary Snapping**: In Attached Mode, the preview window automatically flips and snaps to the left side of Brio if moved near the right edge of the screen, keeping it visible and within viewport bounds.
+- **Quick Settings Access**: Added an interactive Settings Cog button to both Injected and Attached preview modes.
+
+### Fixed
+- **Modal Interactivity & Layering**: Fixed Settings window dimming and input blocking during Brio modal sessions and file browsing dialogs, ensuring settings remain in the foreground and fully interactive.
+- **Off-Screen Child Pane Culling**: Decoupled Attached preview and Settings rendering from Brio's inner child panes to top-level window completion (`igEnd`), preventing preview disappearance when Brio is moved partially off-screen.
+
 ## [0.1.0.3] - 2026-08-13
 
 ### Fixed

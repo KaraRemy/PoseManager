@@ -9,6 +9,7 @@ using System.Text.Json;
 using Dalamud.Hooking;
 using Dalamud.Utility.Signatures;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 
 namespace GposeManager;
 
@@ -26,12 +27,17 @@ public class BrioIntegration : IDisposable
     private Vector2 brioWindowSize = Vector2.Zero;
     private int lastSeenFrame = -1;
 
-    // State tracking for inside the info child pane
+    // State tracking for inside the info child pane, browse dialog, and top-level Brio window
     private bool insideLibraryInfoPane = false;
+    private bool insideBrioTopWindow = false;
+    private bool insideBrioBrowseWindow = false;
 
     // Native Hooks
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate byte BeginDelegate(IntPtr name, IntPtr p_open, int flags);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void EndDelegate();
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate byte BeginChildStrDelegate(IntPtr str_id, Vector2 size, byte border, int flags);
@@ -40,6 +46,7 @@ public class BrioIntegration : IDisposable
     private delegate void EndChildDelegate();
 
     private Hook<BeginDelegate>? beginHook;
+    private Hook<EndDelegate>? endHook;
     private Hook<BeginChildStrDelegate>? beginChildStrHook;
     private Hook<EndChildDelegate>? endChildHook;
 
@@ -83,12 +90,17 @@ public class BrioIntegration : IDisposable
             }
 
             var igBeginAddr = GetProcAddress(moduleHandle, "igBegin");
+            var igEndAddr = GetProcAddress(moduleHandle, "igEnd");
             var igBeginChildStrAddr = GetProcAddress(moduleHandle, "igBeginChild_Str");
             var igEndChildAddr = GetProcAddress(moduleHandle, "igEndChild");
 
             if (igBeginAddr != IntPtr.Zero)
             {
                 beginHook = Plugin.GameInteropProvider.HookFromAddress<BeginDelegate>(igBeginAddr, BeginDetour);
+            }
+            if (igEndAddr != IntPtr.Zero)
+            {
+                endHook = Plugin.GameInteropProvider.HookFromAddress<EndDelegate>(igEndAddr, EndDetour);
             }
             if (igBeginChildStrAddr != IntPtr.Zero)
             {
@@ -109,24 +121,18 @@ public class BrioIntegration : IDisposable
 
     public void UpdateHookState()
     {
-        if (plugin.Configuration.BrioLibraryIntegration)
-        {
-            beginHook?.Enable();
-            beginChildStrHook?.Enable();
-            endChildHook?.Enable();
-        }
-        else
-        {
-            beginHook?.Disable();
-            beginChildStrHook?.Disable();
-            endChildHook?.Disable();
-        }
+        beginHook?.Enable();
+        endHook?.Enable();
+        beginChildStrHook?.Enable();
+        endChildHook?.Enable();
     }
 
     public void Dispose()
     {
         beginHook?.Dispose();
         beginHook = null;
+        endHook?.Dispose();
+        endHook = null;
         beginChildStrHook?.Dispose();
         beginChildStrHook = null;
         endChildHook?.Dispose();
@@ -138,11 +144,27 @@ public class BrioIntegration : IDisposable
         var name = GetUtf8String(namePtr);
         var result = beginHook != null ? beginHook.Original(namePtr, p_open, flags) : (byte)0;
 
-        if (result != 0 && name == "Import Poses##brio_library_popup")
+        // Ensure we only capture the top-level parent window, not nested child windows (which contain '/' or child flags)
+        bool isChildWindow = (flags & (1 << 24)) != 0 || name.Contains('/');
+        if (result != 0 && !isChildWindow)
         {
-            brioWindowPos = ImGui.GetWindowPos();
-            brioWindowSize = ImGui.GetWindowSize();
-            lastSeenFrame = (int)ImGui.GetFrameCount();
+            if (name.EndsWith("##brio_library_popup", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith("###brio_library_window", StringComparison.OrdinalIgnoreCase))
+            {
+                brioWindowPos = ImGui.GetWindowPos();
+                brioWindowSize = ImGui.GetWindowSize();
+                lastSeenFrame = (int)ImGui.GetFrameCount();
+                insideBrioTopWindow = true;
+            }
+            else if (name.Contains("###import_browse", StringComparison.OrdinalIgnoreCase) ||
+                     name.Contains("###export_pose", StringComparison.OrdinalIgnoreCase) ||
+                     (name.StartsWith("Import ", StringComparison.OrdinalIgnoreCase) && name.Contains("###")))
+            {
+                brioWindowPos = ImGui.GetWindowPos();
+                brioWindowSize = ImGui.GetWindowSize();
+                lastSeenFrame = (int)ImGui.GetFrameCount();
+                insideBrioBrowseWindow = true;
+            }
         }
 
         return result;
@@ -167,39 +189,50 @@ public class BrioIntegration : IDisposable
             {
                 insideLibraryInfoPane = false;
 
-                if (plugin.Configuration.BrioLibraryIntegration)
+                // Injection Mode: Render mannequin directly inside Brio's info pane
+                if (plugin.Configuration.BrioLibraryIntegration && plugin.Configuration.BrioIntegrationMode == 0)
                 {
                     if (BrioReflectionHelper.TryGetSelectedPosePath(out var path))
                     {
                         CheckAndLoadPose(path);
 
-                        if (plugin.Configuration.BrioIntegrationMode == 0)
+                        var availHeight = ImGui.GetContentRegionAvail().Y;
+                        if (availHeight >= 120f)
                         {
-                            // Injection Mode: Render mannequin directly inside Brio's info pane
-                            var availHeight = ImGui.GetContentRegionAvail().Y;
-                            if (availHeight >= 120f)
-                            {
-                                ImGui.Separator();
-                                ImGui.Spacing();
-                                ImGui.TextColored(new Vector4(0.2f, 0.8f, 0.9f, 1.0f), "GPose Mannequin Preview");
-                                ImGui.Spacing();
+                            ImGui.Separator();
+                            ImGui.Spacing();
 
-                                var size = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 5);
-                                DrawInteractiveViewport(size);
-                            }
-                        }
-                        else if (plugin.Configuration.BrioIntegrationMode == 1 && (int)ImGui.GetFrameCount() - lastSeenFrame <= 2)
-                        {
-                            // Attached Mode: Render separate snapped window inside modal context so it is interactive
-                            ImGui.SetNextWindowPos(new Vector2(brioWindowPos.X + brioWindowSize.X + 5, brioWindowPos.Y));
-                            ImGui.SetNextWindowSize(new Vector2(500, brioWindowSize.Y));
+                            ImGui.TextColored(new Vector4(0.2f, 0.8f, 0.9f, 1.0f), "GPose Mannequin Preview");
+                            ImGui.SameLine();
 
-                            var flags = ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollbar;
-                            if (ImGui.Begin("Pose Preview##brio_preview_attached", flags))
+                            float cogBtnSize = ImGui.GetTextLineHeight();
+                            float rightPos = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - cogBtnSize - 4f;
+                            if (rightPos > ImGui.GetCursorPosX())
                             {
-                                DrawInteractiveViewport(ImGui.GetContentRegionAvail());
+                                ImGui.SetCursorPosX(rightPos);
                             }
-                            ImGui.End();
+
+                            ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.15f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1f, 1f, 1f, 0.25f));
+                            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(2, 2));
+                            ImGui.PushFont(UiBuilder.IconFont);
+                            if (ImGui.Button(FontAwesomeIcon.Cog.ToIconString() + "##inject_brio_settings", new Vector2(cogBtnSize + 4f, cogBtnSize + 4f)))
+                            {
+                                plugin.ToggleConfigUi();
+                            }
+                            ImGui.PopFont();
+                            ImGui.PopStyleVar();
+                            ImGui.PopStyleColor(3);
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("Open Pose Manager Settings");
+                            }
+
+                            ImGui.Spacing();
+
+                            var size = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 5);
+                            DrawInteractiveViewport(size);
                         }
                     }
                 }
@@ -214,6 +247,146 @@ public class BrioIntegration : IDisposable
         }
 
         endChildHook?.Original();
+    }
+
+    public bool IsBrioWindowActive() => (int)ImGui.GetFrameCount() - lastSeenFrame <= 2;
+
+    private void EndDetour()
+    {
+        try
+        {
+            if (insideBrioBrowseWindow)
+            {
+                insideBrioBrowseWindow = false;
+
+                // Inside "Browse for file" window:
+                // Always render an attached preview window snapped to the browse window as long as integration is enabled
+                if (plugin.Configuration.BrioLibraryIntegration)
+                {
+                    if (BrioReflectionHelper.TryGetSelectedPosePathFromFileDialog(out var path) ||
+                        BrioReflectionHelper.TryGetSelectedPosePath(out path))
+                    {
+                        CheckAndLoadPose(path);
+                        DrawAttachedPreviewWindow();
+                    }
+                }
+
+                // Render Settings Window if open during Browse modal
+                DrawModalSettingsWindow();
+            }
+            else if (insideBrioTopWindow)
+            {
+                insideBrioTopWindow = false;
+
+                bool isModal = BrioReflectionHelper.IsBrioModalOpen();
+
+                // 1. Attached Mode: Render separate snapped window beside Brio
+                if (plugin.Configuration.BrioLibraryIntegration && plugin.Configuration.BrioIntegrationMode == 1)
+                {
+                    if (BrioReflectionHelper.TryGetSelectedPosePath(out var path))
+                    {
+                        CheckAndLoadPose(path);
+                        DrawAttachedPreviewWindow();
+                    }
+                }
+
+                // 2. Render Settings Window if open during Brio session
+                DrawModalSettingsWindow();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ImGui.GetFrameCount() % 3600 == 0)
+            {
+                Plugin.Log.Error($"[PM] Error in EndDetour: {ex}");
+            }
+        }
+
+        endHook?.Original();
+    }
+
+    private void DrawModalSettingsWindow()
+    {
+        if (!plugin.ConfigWindow.IsOpen) return;
+
+        ImGui.SetNextWindowSize(new Vector2(400, 580), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSizeConstraints(new Vector2(400, 300), ImGui.GetIO().DisplaySize);
+
+        bool isOpen = true;
+        if (ImGui.Begin("Pose Manager Settings###PoseManagerConfigWindow", ref isOpen, ImGuiWindowFlags.NoCollapse))
+        {
+            plugin.ConfigWindow.DrawSettingsBody();
+        }
+        ImGui.End();
+
+        if (!isOpen)
+        {
+            plugin.ConfigWindow.IsOpen = false;
+        }
+    }
+
+    private void DrawAttachedPreviewWindow()
+    {
+        float displayW = ImGui.GetIO().DisplaySize.X;
+        float displayH = ImGui.GetIO().DisplaySize.Y;
+        float attachedWidth = 500f;
+
+        // Default to right side of Brio window
+        float targetX = brioWindowPos.X + brioWindowSize.X + 5f;
+
+        // If right side goes off-screen, snap to the left side of Brio window
+        if (targetX + attachedWidth > displayW && brioWindowPos.X - attachedWidth - 5f >= 0)
+        {
+            targetX = brioWindowPos.X - attachedWidth - 5f;
+        }
+        else
+        {
+            targetX = Math.Clamp(targetX, 0f, Math.Max(0f, displayW - attachedWidth));
+        }
+
+        float targetY = Math.Clamp(brioWindowPos.Y, 0f, Math.Max(0f, displayH - brioWindowSize.Y));
+        float targetHeight = Math.Min(brioWindowSize.Y, displayH);
+
+        ImGui.SetNextWindowPos(new Vector2(targetX, targetY));
+        ImGui.SetNextWindowSize(new Vector2(attachedWidth, targetHeight));
+
+        var flags = ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollbar;
+        if (ImGui.Begin("Pose Preview##brio_preview_attached", flags))
+        {
+            // Header bar with title & Cog settings button
+            ImGui.TextColored(new Vector4(0.2f, 0.8f, 0.9f, 1.0f), "GPose Mannequin Preview");
+            ImGui.SameLine();
+
+            float cogBtnSize = ImGui.GetTextLineHeight();
+            float rightPos = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - cogBtnSize - 4f;
+            if (rightPos > ImGui.GetCursorPosX())
+            {
+                ImGui.SetCursorPosX(rightPos);
+            }
+
+            ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.15f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1f, 1f, 1f, 0.25f));
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(2, 2));
+            ImGui.PushFont(UiBuilder.IconFont);
+            if (ImGui.Button(FontAwesomeIcon.Cog.ToIconString() + "##attach_brio_settings", new Vector2(cogBtnSize + 4f, cogBtnSize + 4f)))
+            {
+                plugin.ToggleConfigUi();
+            }
+            ImGui.PopFont();
+            ImGui.PopStyleVar();
+            ImGui.PopStyleColor(3);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Open Pose Manager Settings");
+            }
+
+            ImGui.Spacing();
+
+            var size = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 5);
+            DrawInteractiveViewport(size);
+        }
+        ImGui.End();
     }
 
     private void CheckAndLoadPose(string path)
@@ -390,10 +563,19 @@ public class BrioIntegration : IDisposable
     private static string GetUtf8String(IntPtr ptr)
     {
         if (ptr == IntPtr.Zero) return string.Empty;
-        int len = 0;
-        while (Marshal.ReadByte(ptr, len) != 0) len++;
-        byte[] buffer = new byte[len];
-        Marshal.Copy(ptr, buffer, 0, len);
-        return System.Text.Encoding.UTF8.GetString(buffer);
+        try
+        {
+            int len = 0;
+            const int maxLen = 512;
+            while (len < maxLen && Marshal.ReadByte(ptr, len) != 0) len++;
+            if (len == 0) return string.Empty;
+            byte[] buffer = new byte[len];
+            Marshal.Copy(ptr, buffer, 0, len);
+            return System.Text.Encoding.UTF8.GetString(buffer);
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 }

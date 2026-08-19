@@ -19,7 +19,7 @@ public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 0;
 
-    public string DefaultPosePath { get; set; } = @"D:\Benutzer\Dokumente\Brio\Poses";
+    public string DefaultPosePath { get; set; } = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Brio", "Poses");
 
     // Saved Scene State
     public List<SerializedActor> SavedActors { get; set; } = new();
