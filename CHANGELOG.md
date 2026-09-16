@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0.6] - 2026-09-16
+
+### Changed
+- **Window Collapse Support**: Removed `ImGuiWindowFlags.NoCollapse` from the Settings window and Brio integration settings renderer to enable native title bar collapse buttons.
+
 ## [0.1.0.5] - 2026-08-19
 
 ### Fixed

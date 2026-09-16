@@ -313,7 +313,7 @@ public class BrioIntegration : IDisposable
         ImGui.SetNextWindowSizeConstraints(new Vector2(400, 300), ImGui.GetIO().DisplaySize);
 
         bool isOpen = true;
-        if (ImGui.Begin("Pose Manager Settings###PoseManagerConfigWindow", ref isOpen, ImGuiWindowFlags.NoCollapse))
+        if (ImGui.Begin("Pose Manager Settings###PoseManagerConfigWindow", ref isOpen, ImGuiWindowFlags.None))
         {
             plugin.ConfigWindow.DrawSettingsBody();
         }

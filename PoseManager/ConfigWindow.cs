@@ -12,8 +12,6 @@ public class ConfigWindow : Window, IDisposable
 
     public ConfigWindow(Plugin plugin) : base("Pose Manager Settings###PoseManagerConfigWindow")
     {
-        Flags = ImGuiWindowFlags.NoCollapse;
-
         Size = new Vector2(400, 580);
         SizeCondition = ImGuiCond.FirstUseEver;
 
