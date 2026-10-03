@@ -401,6 +401,7 @@ public class BrioIntegration : IDisposable
                 var pose = JsonSerializer.Deserialize<PoseData>(json);
                 if (pose != null)
                 {
+                    pose.NormalizeBoneAliases();
                     actorInstance.FilePath = path;
                     actorInstance.Pose = pose;
 
@@ -423,11 +424,7 @@ public class BrioIntegration : IDisposable
                     // Auto-Frame or Auto-Focus Brio Preview Camera
                     if (plugin.Configuration.AutoFramePoseOnLoad)
                     {
-                        Vector3 pelvisPos = Vector3.Zero;
-                        if (pose.Bones.TryGetValue("j_kosi", out var pelvisBone))
-                        {
-                            pelvisPos = pelvisBone.Position;
-                        }
+                        Vector3 pelvisPos = pose.GetRootOrPelvisPosition();
 
                         Vector3 minBound = new Vector3(float.MaxValue);
                         Vector3 maxBound = new Vector3(float.MinValue);

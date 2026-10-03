@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0.7] - 2026-10-03
+
+### Added
+- **Anamnesis & Universal Rig Bone Alias Support**: Added automatic translation for English bone names (`Waist`, `SpineA/B/C`, `Neck`, `Head`, `ArmLeft/Right`, `LegLeft/Right`, etc.) and external rig naming conventions (`Pelvis`, `Hips`, `LeftArm`, `LeftLeg`, `Spine1-3`, `Chest`, etc.) to native game bone identifiers (`j_*`, `n_*`), enabling 3D mannequin previews for Anamnesis poses.
+- **Partial Pose & Prop Fallback Centering**: Added root/pelvis fallback cascading (`j_kosi` -> `j_sebo_a` -> `j_sebo_b` -> `n_hara` -> `n_root` -> centroid) so partial poses and accessory/prop poses center and auto-frame correctly.
+- **Prop & Isolated Bone Fallback Rendering**: If a pose contains bones but no humanoid mannequin limbs can be formed (such as prop poses or hand-only poses), all active visible bones render as joint spheres to ensure the preview is never empty.
+- **Delimiter Resilient Vector Parsing**: Enhanced vector and quaternion parsing to support space-, tab-, and comma-delimited transform values.
+
 ## [0.1.0.6] - 2026-09-16
 
 ### Changed

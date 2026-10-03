@@ -95,11 +95,7 @@ public class SkeletonRenderer
             {
                 if (actor.Pose == null) continue;
 
-                Vector3 pelvisPos = Vector3.Zero;
-                if (actor.Pose.Bones.TryGetValue("j_kosi", out var pelvisBone))
-                {
-                    pelvisPos = pelvisBone.Position;
-                }
+                Vector3 pelvisPos = actor.Pose.GetRootOrPelvisPosition();
 
                 foreach (var bone in actor.Pose.Bones.Values)
                 {
@@ -171,12 +167,10 @@ public class SkeletonRenderer
 
             var baseColor = actor.Color;
 
-            // Find pelvis position to subtract (to center the mannequin around pelvis)
-            Vector3 pelvisPos = Vector3.Zero;
-            if (actor.Pose.Bones.TryGetValue("j_kosi", out var pelvisBone))
-            {
-                pelvisPos = pelvisBone.Position;
-            }
+            int initialActorCmdCount = commandsList.Count;
+
+            // Find pelvis/root position to subtract (to center the mannequin around pelvis or centroid)
+            Vector3 pelvisPos = actor.Pose.GetRootOrPelvisPosition();
 
             // Cache projected screen coordinates and depths of all loaded bones into reusable buffer
             projectedBonesBuffer.Clear();
@@ -272,6 +266,34 @@ public class SkeletonRenderer
                         Color = color,
                         OutlineColor = outlineColor
                     });
+                }
+            }
+
+            // Fallback: If no mannequin limbs or joints could be drawn (e.g. prop, accessory, or partial pose),
+            // render all visible bones as joints so the preview is never empty
+            if (commandsList.Count == initialActorCmdCount && projectedBonesBuffer.Count > 0)
+            {
+                foreach (var kp in projectedBonesBuffer)
+                {
+                    if (kp.Value.visible)
+                    {
+                        float fade = GetDepthFade(kp.Value.depth, actorReferenceDepth, 0.4f, 0.6f, config.DepthFadeIntensity, config.EnableDepthShading);
+                        float canvasScale = camera.CanvasSize.Y / 500.0f;
+                        float baseRadius = 8.0f * config.JointSize * canvasScale;
+                        float radius = Math.Clamp(baseRadius / kp.Value.depth, 1.0f * canvasScale, 50.0f * canvasScale);
+
+                        uint color = ImGui.ColorConvertFloat4ToU32(new Vector4(baseColor.X * 1.1f * fade, baseColor.Y * 1.1f * fade, baseColor.Z * 1.1f * fade, 0.95f * fade));
+                        uint outlineColor = ImGui.ColorConvertFloat4ToU32(new Vector4(baseColor.X * 0.3f * fade, baseColor.Y * 0.3f * fade, baseColor.Z * 0.3f * fade, 0.95f * fade));
+
+                        commandsList.Add(new JointCommand
+                        {
+                            Depth = kp.Value.depth,
+                            Position = kp.Value.pos,
+                            Radius = radius,
+                            Color = color,
+                            OutlineColor = outlineColor
+                        });
+                    }
                 }
             }
         }
