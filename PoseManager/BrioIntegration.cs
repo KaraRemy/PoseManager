@@ -27,8 +27,11 @@ public class BrioIntegration : IDisposable
     private Vector2 brioWindowSize = Vector2.Zero;
     private int lastSeenFrame = -1;
 
-    // State tracking for inside the info child pane, browse dialog, and top-level Brio window
-    private bool insideLibraryInfoPane = false;
+    // Frame-level state tracking
+    private int lastFrameCount = -1;
+    private readonly Stack<string> childStack = new();
+    private bool renderedInInfoPaneThisFrame = false;
+    private bool renderedAttachedThisFrame = false;
     private bool insideBrioTopWindow = false;
     private bool insideBrioBrowseWindow = false;
 
@@ -43,11 +46,17 @@ public class BrioIntegration : IDisposable
     private delegate byte BeginChildStrDelegate(IntPtr str_id, Vector2 size, byte border, int flags);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate byte BeginChildIDDelegate(uint id, Vector2 size, byte border, int flags);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void EndChildDelegate();
 
     private Hook<BeginDelegate>? beginHook;
     private Hook<EndDelegate>? endHook;
+    private Hook<BeginDelegate>? beginPopupModalHook;
+    private Hook<EndDelegate>? endPopupHook;
     private Hook<BeginChildStrDelegate>? beginChildStrHook;
+    private Hook<BeginChildIDDelegate>? beginChildIDHook;
     private Hook<EndChildDelegate>? endChildHook;
 
     [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
@@ -65,6 +74,18 @@ public class BrioIntegration : IDisposable
         this.actorsList = new List<ViewportWindow.ActorInstance> { this.actorInstance };
 
         InitializeHooks();
+    }
+
+    private void EnsureFrameReset()
+    {
+        int currentFrame = (int)ImGui.GetFrameCount();
+        if (currentFrame != lastFrameCount)
+        {
+            lastFrameCount = currentFrame;
+            renderedInInfoPaneThisFrame = false;
+            renderedAttachedThisFrame = false;
+            childStack.Clear();
+        }
     }
 
     private void InitializeHooks()
@@ -91,7 +112,10 @@ public class BrioIntegration : IDisposable
 
             var igBeginAddr = GetProcAddress(moduleHandle, "igBegin");
             var igEndAddr = GetProcAddress(moduleHandle, "igEnd");
+            var igBeginPopupModalAddr = GetProcAddress(moduleHandle, "igBeginPopupModal");
+            var igEndPopupAddr = GetProcAddress(moduleHandle, "igEndPopup");
             var igBeginChildStrAddr = GetProcAddress(moduleHandle, "igBeginChild_Str");
+            var igBeginChildIDAddr = GetProcAddress(moduleHandle, "igBeginChild_ID");
             var igEndChildAddr = GetProcAddress(moduleHandle, "igEndChild");
 
             if (igBeginAddr != IntPtr.Zero)
@@ -102,9 +126,21 @@ public class BrioIntegration : IDisposable
             {
                 endHook = Plugin.GameInteropProvider.HookFromAddress<EndDelegate>(igEndAddr, EndDetour);
             }
+            if (igBeginPopupModalAddr != IntPtr.Zero)
+            {
+                beginPopupModalHook = Plugin.GameInteropProvider.HookFromAddress<BeginDelegate>(igBeginPopupModalAddr, BeginPopupModalDetour);
+            }
+            if (igEndPopupAddr != IntPtr.Zero)
+            {
+                endPopupHook = Plugin.GameInteropProvider.HookFromAddress<EndDelegate>(igEndPopupAddr, EndPopupDetour);
+            }
             if (igBeginChildStrAddr != IntPtr.Zero)
             {
                 beginChildStrHook = Plugin.GameInteropProvider.HookFromAddress<BeginChildStrDelegate>(igBeginChildStrAddr, BeginChildStrDetour);
+            }
+            if (igBeginChildIDAddr != IntPtr.Zero)
+            {
+                beginChildIDHook = Plugin.GameInteropProvider.HookFromAddress<BeginChildIDDelegate>(igBeginChildIDAddr, BeginChildIDDetour);
             }
             if (igEndChildAddr != IntPtr.Zero)
             {
@@ -123,7 +159,10 @@ public class BrioIntegration : IDisposable
     {
         beginHook?.Enable();
         endHook?.Enable();
+        beginPopupModalHook?.Enable();
+        endPopupHook?.Enable();
         beginChildStrHook?.Enable();
+        beginChildIDHook?.Enable();
         endChildHook?.Enable();
     }
 
@@ -133,18 +172,25 @@ public class BrioIntegration : IDisposable
         beginHook = null;
         endHook?.Dispose();
         endHook = null;
+        beginPopupModalHook?.Dispose();
+        beginPopupModalHook = null;
+        endPopupHook?.Dispose();
+        endPopupHook = null;
         beginChildStrHook?.Dispose();
         beginChildStrHook = null;
+        beginChildIDHook?.Dispose();
+        beginChildIDHook = null;
         endChildHook?.Dispose();
         endChildHook = null;
     }
 
     private byte BeginDetour(IntPtr namePtr, IntPtr p_open, int flags)
     {
+        EnsureFrameReset();
         var name = GetUtf8String(namePtr);
         var result = beginHook != null ? beginHook.Original(namePtr, p_open, flags) : (byte)0;
 
-        // Ensure we only capture the top-level parent window, not nested child windows (which contain '/' or child flags)
+        // Ensure we only capture the top-level parent window, not nested child windows
         bool isChildWindow = (flags & (1 << 24)) != 0 || name.Contains('/');
         if (result != 0 && !isChildWindow)
         {
@@ -170,35 +216,76 @@ public class BrioIntegration : IDisposable
         return result;
     }
 
+    private byte BeginPopupModalDetour(IntPtr namePtr, IntPtr p_open, int flags)
+    {
+        EnsureFrameReset();
+        var name = GetUtf8String(namePtr);
+        var result = beginPopupModalHook != null ? beginPopupModalHook.Original(namePtr, p_open, flags) : (byte)0;
+
+        if (result != 0)
+        {
+            if (name.EndsWith("##brio_library_popup", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith("###brio_library_window", StringComparison.OrdinalIgnoreCase))
+            {
+                brioWindowPos = ImGui.GetWindowPos();
+                brioWindowSize = ImGui.GetWindowSize();
+                lastSeenFrame = (int)ImGui.GetFrameCount();
+                insideBrioTopWindow = true;
+            }
+            else if (name.Contains("###import_browse", StringComparison.OrdinalIgnoreCase) ||
+                     name.Contains("###export_pose", StringComparison.OrdinalIgnoreCase) ||
+                     (name.StartsWith("Import ", StringComparison.OrdinalIgnoreCase) && name.Contains("###")))
+            {
+                brioWindowPos = ImGui.GetWindowPos();
+                brioWindowSize = ImGui.GetWindowSize();
+                lastSeenFrame = (int)ImGui.GetFrameCount();
+                insideBrioBrowseWindow = true;
+            }
+        }
+
+        return result;
+    }
+
     private byte BeginChildStrDetour(IntPtr strIdPtr, Vector2 size, byte border, int flags)
     {
+        EnsureFrameReset();
         var strId = GetUtf8String(strIdPtr);
-        if (strId == "###library_info_pane")
-        {
-            insideLibraryInfoPane = true;
-        }
+        childStack.Push(strId);
 
         return beginChildStrHook != null ? beginChildStrHook.Original(strIdPtr, size, border, flags) : (byte)0;
     }
 
+    private byte BeginChildIDDetour(uint id, Vector2 size, byte border, int flags)
+    {
+        EnsureFrameReset();
+        childStack.Push(string.Empty);
+
+        return beginChildIDHook != null ? beginChildIDHook.Original(id, size, border, flags) : (byte)0;
+    }
+
     private void EndChildDetour()
     {
+        EnsureFrameReset();
+        string endingChild = childStack.Count > 0 ? childStack.Pop() : string.Empty;
+
         try
         {
-            if (insideLibraryInfoPane)
+            if (endingChild == "###library_info_pane")
             {
-                insideLibraryInfoPane = false;
-
-                // Injection Mode: Render mannequin directly inside Brio's info pane
-                if (plugin.Configuration.BrioLibraryIntegration && plugin.Configuration.BrioIntegrationMode == 0)
+                if (insideBrioTopWindow || (int)ImGui.GetFrameCount() - lastSeenFrame <= 2)
                 {
-                    if (BrioReflectionHelper.TryGetSelectedPosePath(out var path))
-                    {
-                        CheckAndLoadPose(path);
+                    brioWindowPos = ImGui.GetWindowPos();
+                    brioWindowSize = ImGui.GetWindowSize();
+                }
 
-                        var availHeight = ImGui.GetContentRegionAvail().Y;
-                        if (availHeight >= 120f)
+                if (plugin.Configuration.BrioLibraryIntegration)
+                {
+                    if (plugin.Configuration.BrioIntegrationMode == 0 && !renderedInInfoPaneThisFrame)
+                    {
+                        if (BrioReflectionHelper.TryGetSelectedPosePath(out var path))
                         {
+                            CheckAndLoadPose(path);
+
                             ImGui.Separator();
                             ImGui.Spacing();
 
@@ -231,8 +318,24 @@ public class BrioIntegration : IDisposable
 
                             ImGui.Spacing();
 
-                            var size = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 5);
+                            var avail = ImGui.GetContentRegionAvail();
+                            float previewWidth = Math.Max(avail.X - 6f, 20f);
+                            float itemSpacingY = ImGui.GetStyle().ItemSpacing.Y;
+                            float previewHeight = Math.Max(avail.Y - itemSpacingY - 6f, 60f);
+
+                            var size = new Vector2(previewWidth, previewHeight);
                             DrawInteractiveViewport(size);
+
+                            renderedInInfoPaneThisFrame = true;
+                        }
+                    }
+                    else if (plugin.Configuration.BrioIntegrationMode == 1 && !renderedAttachedThisFrame && (int)ImGui.GetFrameCount() - lastSeenFrame <= 2)
+                    {
+                        if (BrioReflectionHelper.TryGetSelectedPosePath(out var path))
+                        {
+                            CheckAndLoadPose(path);
+                            DrawAttachedPreviewWindow();
+                            renderedAttachedThisFrame = true;
                         }
                     }
                 }
@@ -253,44 +356,43 @@ public class BrioIntegration : IDisposable
 
     private void EndDetour()
     {
+        EnsureFrameReset();
+        bool wasBrowse = insideBrioBrowseWindow;
+        bool wasTop = insideBrioTopWindow;
+        insideBrioBrowseWindow = false;
+        insideBrioTopWindow = false;
+
+        endHook?.Original();
+
         try
         {
-            if (insideBrioBrowseWindow)
+            if (wasBrowse)
             {
-                insideBrioBrowseWindow = false;
-
-                // Inside "Browse for file" window:
-                // Always render an attached preview window snapped to the browse window as long as integration is enabled
-                if (plugin.Configuration.BrioLibraryIntegration)
+                if (plugin.Configuration.BrioLibraryIntegration && !renderedAttachedThisFrame)
                 {
                     if (BrioReflectionHelper.TryGetSelectedPosePathFromFileDialog(out var path) ||
                         BrioReflectionHelper.TryGetSelectedPosePath(out path))
                     {
                         CheckAndLoadPose(path);
                         DrawAttachedPreviewWindow();
+                        renderedAttachedThisFrame = true;
                     }
                 }
 
-                // Render Settings Window if open during Browse modal
                 DrawModalSettingsWindow();
             }
-            else if (insideBrioTopWindow)
+            else if (wasTop)
             {
-                insideBrioTopWindow = false;
-
-                bool isModal = BrioReflectionHelper.IsBrioModalOpen();
-
-                // 1. Attached Mode: Render separate snapped window beside Brio
-                if (plugin.Configuration.BrioLibraryIntegration && plugin.Configuration.BrioIntegrationMode == 1)
+                if (plugin.Configuration.BrioLibraryIntegration && plugin.Configuration.BrioIntegrationMode == 1 && !renderedAttachedThisFrame)
                 {
                     if (BrioReflectionHelper.TryGetSelectedPosePath(out var path))
                     {
                         CheckAndLoadPose(path);
                         DrawAttachedPreviewWindow();
+                        renderedAttachedThisFrame = true;
                     }
                 }
 
-                // 2. Render Settings Window if open during Brio session
                 DrawModalSettingsWindow();
             }
         }
@@ -301,8 +403,57 @@ public class BrioIntegration : IDisposable
                 Plugin.Log.Error($"[PM] Error in EndDetour: {ex}");
             }
         }
+    }
 
-        endHook?.Original();
+    private void EndPopupDetour()
+    {
+        EnsureFrameReset();
+        bool wasBrowse = insideBrioBrowseWindow;
+        bool wasTop = insideBrioTopWindow;
+        insideBrioBrowseWindow = false;
+        insideBrioTopWindow = false;
+
+        endPopupHook?.Original();
+
+        try
+        {
+            if (wasBrowse)
+            {
+                if (plugin.Configuration.BrioLibraryIntegration && !renderedAttachedThisFrame)
+                {
+                    if (BrioReflectionHelper.TryGetSelectedPosePathFromFileDialog(out var path) ||
+                        BrioReflectionHelper.TryGetSelectedPosePath(out path))
+                    {
+                        CheckAndLoadPose(path);
+                        DrawAttachedPreviewWindow();
+                        renderedAttachedThisFrame = true;
+                    }
+                }
+
+                DrawModalSettingsWindow();
+            }
+            else if (wasTop)
+            {
+                if (plugin.Configuration.BrioLibraryIntegration && plugin.Configuration.BrioIntegrationMode == 1 && !renderedAttachedThisFrame)
+                {
+                    if (BrioReflectionHelper.TryGetSelectedPosePath(out var path))
+                    {
+                        CheckAndLoadPose(path);
+                        DrawAttachedPreviewWindow();
+                        renderedAttachedThisFrame = true;
+                    }
+                }
+
+                DrawModalSettingsWindow();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ImGui.GetFrameCount() % 3600 == 0)
+            {
+                Plugin.Log.Error($"[PM] Error in EndPopupDetour: {ex}");
+            }
+        }
     }
 
     private void DrawModalSettingsWindow()
@@ -397,6 +548,13 @@ public class BrioIntegration : IDisposable
         {
             if (File.Exists(path))
             {
+                if (path.EndsWith(".cmp", StringComparison.OrdinalIgnoreCase))
+                {
+                    // .cmp files cannot be directly rendered on the 3D mannequin without conversion
+                    lastLoadedPath = path;
+                    return;
+                }
+
                 var json = File.ReadAllText(path);
                 var pose = JsonSerializer.Deserialize<PoseData>(json);
                 if (pose != null)

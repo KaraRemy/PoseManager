@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0.8] - 2026-10-03
+
+### Fixed
+- **Brio v0.8.0.12 Compatibility**: Resolved reflection failure caused by disposed `IServiceProvider` instances by referencing `UIManager.Instance` and `ModalManager.Instance` directly.
+- **Assembly Lifecycle Re-binding**: Traversed active assemblies in reverse order during reflection initialization so the plugin binds to the active Brio runtime rather than any stale or disposed instances.
+- **Nested Child Window Stack**: Implemented native tracking hooks for `igBeginChild_Str`, `igBeginChild_ID`, `igBeginPopupModal`, and `igEndPopup` with a per-frame stack, preventing inner widgets from prematurely closing the library info pane.
+- **Injected Mode Layout & Scrollbar Elimination**: Sized the injected preview canvas to the remaining pane space after header rendering and added margin padding, eliminating vertical scrollbar overflow and right-edge clipping.
+- **Legacy .cmp Parsing Guard**: Prevented unhandled deserialization errors when inspecting legacy `.cmp` files in Brio's library.
+
 ## [0.1.0.7] - 2026-10-03
 
 ### Added

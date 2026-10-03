@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json;
 using Dalamud.Bindings.ImGui;
 
 namespace GposeManager;
@@ -15,19 +14,27 @@ public static class BrioReflectionHelper
     private static Type? brioType;
     private static FieldInfo? servicesField;
     private static Type? uiManagerType;
+    private static PropertyInfo? uiManagerInstanceProp;
     private static FieldInfo? libraryWindowField;
     private static Type? libraryWindowType;
+    private static Type? modalManagerType;
+    private static PropertyInfo? modalManagerInstanceProp;
+    private static FieldInfo? modalLibraryWindowField;
     private static FieldInfo? isModalField;
+    private static PropertyInfo? isModalProp;
     private static FieldInfo? modalFilterField;
     private static FieldInfo? selectedField;
+    private static FieldInfo? libraryEntityManagerField;
     private static Type? fileEntryType;
     private static FieldInfo? filePathField;
+    private static FieldInfo? filterNameField;
     private static PropertyInfo? filterNameProp;
 
     private static Type? entityManagerType;
     private static FieldInfo? entityMapField;
     private static PropertyInfo? actorFriendlyNameProp;
     private static PropertyInfo? actorCapabilitiesProp;
+    private static FieldInfo? fileDialogManagerField;
 
     private static bool initialized = false;
 
@@ -38,36 +45,88 @@ public static class BrioReflectionHelper
         public object PosingCapObj { get; set; } = null!;
     }
 
-    public static void Initialize()
+    public static bool IsSupportedPoseFile(string? path)
     {
-        if (initialized) return;
+        if (string.IsNullOrEmpty(path)) return false;
+        return path.EndsWith(".pose", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith(".cmp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? GetFilterName(object? filter)
+    {
+        if (filter == null) return null;
+        try
+        {
+            var name = (filterNameField?.GetValue(filter) ?? filterNameProp?.GetValue(filter)) as string;
+            if (string.IsNullOrEmpty(name))
+            {
+                name = (filter.GetType().GetField("Name", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(filter) ??
+                        filter.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(filter)) as string;
+            }
+            return name;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static void Initialize(bool force = false)
+    {
+        if (initialized && !force) return;
 
         try
         {
-            brioAssembly = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Brio");
-            if (brioAssembly == null) return; // Brio not loaded yet
+            var brioAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(a => a.GetName().Name == "Brio")
+                .Reverse()
+                .ToList();
+
+            if (brioAssemblies.Count == 0) return;
+
+            // Find active assembly by checking for non-null UIManager.Instance or ModalManager.Instance
+            Assembly? activeAsm = null;
+            foreach (var asm in brioAssemblies)
+            {
+                var uiType = asm.GetType("Brio.UI.UIManager");
+                var instProp = uiType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+                if (instProp?.GetValue(null) != null)
+                {
+                    activeAsm = asm;
+                    break;
+                }
+            }
+
+            brioAssembly = activeAsm ?? brioAssemblies.FirstOrDefault();
+            if (brioAssembly == null) return;
 
             brioType = brioAssembly.GetType("Brio.Brio");
-            if (brioType == null)
-            {
-                return;
-            }
-
-            servicesField = brioType.GetField("_services", BindingFlags.NonPublic | BindingFlags.Static);
-            if (servicesField == null)
-            {
-                return;
-            }
+            servicesField = brioType?.GetField("_services", BindingFlags.NonPublic | BindingFlags.Static);
 
             uiManagerType = brioAssembly.GetType("Brio.UI.UIManager");
-            libraryWindowType = brioAssembly.GetType("Brio.UI.Windows.LibraryWindow");
-            if (uiManagerType != null && libraryWindowType != null)
+            uiManagerInstanceProp = uiManagerType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+
+            modalManagerType = brioAssembly.GetType("Brio.UI.ModalManager");
+            modalManagerInstanceProp = modalManagerType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            if (modalManagerType != null)
             {
-                libraryWindowField = uiManagerType.GetField("_libraryWindow", BindingFlags.NonPublic | BindingFlags.Instance);
+                modalLibraryWindowField = modalManagerType.GetField("_libraryWindow", BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+
+            libraryWindowType = brioAssembly.GetType("Brio.UI.Windows.LibraryWindow");
+            if (libraryWindowType != null)
+            {
                 isModalField = libraryWindowType.GetField("_isModal", BindingFlags.NonPublic | BindingFlags.Instance);
+                isModalProp = libraryWindowType.GetProperty("IsModal", BindingFlags.Public | BindingFlags.Instance);
                 modalFilterField = libraryWindowType.GetField("_modalFilter", BindingFlags.NonPublic | BindingFlags.Instance);
                 selectedField = libraryWindowType.GetField("_selected", BindingFlags.NonPublic | BindingFlags.Instance);
+                libraryEntityManagerField = libraryWindowType.GetField("_entityManager", BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+
+            if (uiManagerType != null)
+            {
+                libraryWindowField = uiManagerType.GetField("_libraryWindow", BindingFlags.NonPublic | BindingFlags.Instance);
+                fileDialogManagerField = uiManagerType.GetField("FileDialogManager", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             }
 
             fileEntryType = brioAssembly.GetType("Brio.Library.Sources.FileEntry");
@@ -79,6 +138,7 @@ public static class BrioReflectionHelper
             var filterBaseType = brioAssembly.GetType("Brio.Library.Filters.FilterBase");
             if (filterBaseType != null)
             {
+                filterNameField = filterBaseType.GetField("Name", BindingFlags.Public | BindingFlags.Instance);
                 filterNameProp = filterBaseType.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
             }
 
@@ -88,16 +148,16 @@ public static class BrioReflectionHelper
                 entityMapField = entityManagerType.GetField("_entityMap", BindingFlags.NonPublic | BindingFlags.Instance);
             }
 
-            var actorEntityType = brioAssembly.GetType("Brio.Entities.ActorEntity");
+            var actorEntityType = brioAssembly.GetType("Brio.Entities.Actor.ActorEntity") ?? brioAssembly.GetType("Brio.Entities.ActorEntity");
             if (actorEntityType != null)
             {
                 actorFriendlyNameProp = actorEntityType.GetProperty("FriendlyName", BindingFlags.Public | BindingFlags.Instance);
                 actorCapabilitiesProp = actorEntityType.GetProperty("Capabilities", BindingFlags.Public | BindingFlags.Instance);
             }
 
-            if (servicesField != null && entityManagerType != null && entityMapField != null)
+            initialized = (uiManagerType != null && libraryWindowType != null);
+            if (initialized)
             {
-                initialized = true;
                 Plugin.Log.Information("[PM] Brio selection reflection initialized successfully.");
             }
         }
@@ -107,19 +167,137 @@ public static class BrioReflectionHelper
         }
     }
 
+    public static object? GetUIManager()
+    {
+        Initialize();
+        try
+        {
+            var inst = uiManagerInstanceProp?.GetValue(null);
+            if (inst != null) return inst;
+        }
+        catch { }
+
+        try
+        {
+            Initialize(force: true);
+            return uiManagerInstanceProp?.GetValue(null);
+        }
+        catch { }
+
+        return null;
+    }
+
+    public static object? GetLibraryWindow()
+    {
+        Initialize();
+
+        // 1. Try via UIManager.Instance
+        try
+        {
+            var uiManager = GetUIManager();
+            if (uiManager != null && libraryWindowField != null)
+            {
+                var lw = libraryWindowField.GetValue(uiManager);
+                if (lw != null) return lw;
+            }
+        }
+        catch { }
+
+        // 2. Try via ModalManager.Instance
+        try
+        {
+            if (modalManagerInstanceProp != null && modalLibraryWindowField != null)
+            {
+                var modalManager = modalManagerInstanceProp.GetValue(null);
+                if (modalManager != null)
+                {
+                    var lw = modalLibraryWindowField.GetValue(modalManager);
+                    if (lw != null) return lw;
+                }
+            }
+        }
+        catch { }
+
+        // 3. Fallback to IServiceProvider safely catching ObjectDisposedException
+        try
+        {
+            if (servicesField != null && libraryWindowType != null)
+            {
+                var services = servicesField.GetValue(null) as IServiceProvider;
+                if (services != null)
+                {
+                    return services.GetService(libraryWindowType);
+                }
+            }
+        }
+        catch (ObjectDisposedException) { }
+        catch { }
+
+        return null;
+    }
+
+    public static object? GetEntityManager()
+    {
+        Initialize();
+
+        // 1. Try from LibraryWindow
+        try
+        {
+            var lw = GetLibraryWindow();
+            if (lw != null && libraryEntityManagerField != null)
+            {
+                var em = libraryEntityManagerField.GetValue(lw);
+                if (em != null) return em;
+            }
+        }
+        catch { }
+
+        // 2. Try from UIManager._overlayWindow._entityManager
+        try
+        {
+            var uiManager = GetUIManager();
+            if (uiManager != null && uiManagerType != null)
+            {
+                var overlayWinField = uiManagerType.GetField("_overlayWindow", BindingFlags.NonPublic | BindingFlags.Instance);
+                var overlayWin = overlayWinField?.GetValue(uiManager);
+                if (overlayWin != null)
+                {
+                    var emField = overlayWin.GetType().GetField("_entityManager", BindingFlags.NonPublic | BindingFlags.Instance);
+                    var em = emField?.GetValue(overlayWin);
+                    if (em != null) return em;
+                }
+            }
+        }
+        catch { }
+
+        // 3. Fallback via ServiceProvider with ObjectDisposedException caught
+        try
+        {
+            if (servicesField != null && entityManagerType != null)
+            {
+                var services = servicesField.GetValue(null) as IServiceProvider;
+                if (services != null)
+                {
+                    return services.GetService(entityManagerType);
+                }
+            }
+        }
+        catch (ObjectDisposedException) { }
+        catch { }
+
+        return null;
+    }
+
     public static List<BrioActorTarget> GetBrioActors()
     {
         var list = new List<BrioActorTarget>();
         Initialize();
-        if (!initialized || servicesField == null || entityManagerType == null || entityMapField == null)
+        if (entityManagerType == null || entityMapField == null)
             return list;
 
         try
         {
-            var services = servicesField.GetValue(null) as IServiceProvider;
-            if (services == null) return list;
-
-            var entityManager = services.GetService(entityManagerType);
+            var entityManager = GetEntityManager();
             if (entityManager == null) return list;
 
             var entityMap = entityMapField.GetValue(entityManager) as IDictionary;
@@ -163,7 +341,10 @@ public static class BrioReflectionHelper
         }
         catch (Exception ex)
         {
-            Plugin.Log.Error($"[PM] Error getting Brio actors: {ex.Message}");
+            if (ImGui.GetFrameCount() % 3600 == 0)
+            {
+                Plugin.Log.Error($"[PM] Error getting Brio actors: {ex.Message}");
+            }
         }
 
         return list;
@@ -242,17 +423,9 @@ public static class BrioReflectionHelper
     public static bool IsBrioModalOpen()
     {
         Initialize();
-        if (!initialized || servicesField == null || uiManagerType == null || libraryWindowField == null) return false;
-
         try
         {
-            var services = servicesField.GetValue(null) as IServiceProvider;
-            if (services == null) return false;
-
-            var uiManager = services.GetService(uiManagerType!);
-            if (uiManager == null) return false;
-
-            var libraryWindow = libraryWindowField!.GetValue(uiManager);
+            var libraryWindow = GetLibraryWindow();
             if (libraryWindow == null) return false;
 
             var isOpenProp = libraryWindow.GetType().GetProperty("IsOpen", BindingFlags.Public | BindingFlags.Instance);
@@ -260,7 +433,12 @@ public static class BrioReflectionHelper
             bool isOpen = (bool)isOpenProp.GetValue(libraryWindow)!;
             if (!isOpen) return false;
 
-            return isModalField != null && (bool)isModalField.GetValue(libraryWindow)!;
+            if (isModalProp != null)
+                return (bool)isModalProp.GetValue(libraryWindow)!;
+            if (isModalField != null)
+                return (bool)isModalField.GetValue(libraryWindow)!;
+
+            return false;
         }
         catch
         {
@@ -275,17 +453,10 @@ public static class BrioReflectionHelper
         path = string.Empty;
         isModal = false;
         Initialize();
-        if (!initialized || servicesField == null || uiManagerType == null || libraryWindowField == null) return false;
 
         try
         {
-            var services = servicesField.GetValue(null) as IServiceProvider;
-            if (services == null) return false;
-
-            var uiManager = services.GetService(uiManagerType!);
-            if (uiManager == null) return false;
-
-            var libraryWindow = libraryWindowField!.GetValue(uiManager);
+            var libraryWindow = GetLibraryWindow();
             if (libraryWindow == null) return false;
 
             // Check if window is open
@@ -295,15 +466,17 @@ public static class BrioReflectionHelper
             if (!isOpen) return false;
 
             // If in modal mode, check if modal filter is Poses
-            isModal = isModalField != null && (bool)isModalField.GetValue(libraryWindow)!;
-            if (isModal)
+            isModal = (isModalProp != null ? (bool)isModalProp.GetValue(libraryWindow)! : (isModalField != null && (bool)isModalField.GetValue(libraryWindow)!));
+            if (isModal && modalFilterField != null)
             {
-                if (modalFilterField != null && filterNameProp != null)
+                var filter = modalFilterField.GetValue(libraryWindow);
+                if (filter != null)
                 {
-                    var filter = modalFilterField.GetValue(libraryWindow);
-                    if (filter == null) return false;
-                    var filterName = filterNameProp.GetValue(filter) as string;
-                    if (filterName != "Poses") return false;
+                    var filterName = GetFilterName(filter);
+                    if (!string.IsNullOrEmpty(filterName) && !filterName.Equals("Poses", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
                 }
             }
 
@@ -311,16 +484,23 @@ public static class BrioReflectionHelper
             if (selectedField != null)
             {
                 var selected = selectedField.GetValue(libraryWindow);
-                if (selected != null && fileEntryType != null && fileEntryType.IsInstanceOfType(selected))
+                if (selected != null)
                 {
-                    if (filePathField != null)
+                    string? filePath = null;
+                    if (fileEntryType != null && fileEntryType.IsInstanceOfType(selected) && filePathField != null)
                     {
-                        var filePath = filePathField.GetValue(selected) as string;
-                        if (!string.IsNullOrEmpty(filePath) && filePath.EndsWith(".pose", StringComparison.OrdinalIgnoreCase))
-                        {
-                            path = filePath;
-                            return true;
-                        }
+                        filePath = filePathField.GetValue(selected) as string;
+                    }
+                    else
+                    {
+                        filePath = (selected.GetType().GetField("FilePath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(selected) ??
+                                    selected.GetType().GetProperty("FilePath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(selected)) as string;
+                    }
+
+                    if (!string.IsNullOrEmpty(filePath) && IsSupportedPoseFile(filePath))
+                    {
+                        path = filePath;
+                        return true;
                     }
                 }
             }
@@ -336,32 +516,25 @@ public static class BrioReflectionHelper
         return false;
     }
 
-    private static FieldInfo? fileDialogManagerField;
-
     public static bool TryGetSelectedPosePathFromFileDialog(out string path)
     {
         path = string.Empty;
         Initialize();
-        if (!initialized || servicesField == null || uiManagerType == null) return false;
 
         try
         {
-            var services = servicesField.GetValue(null) as IServiceProvider;
-            if (services == null) return false;
-
-            var uiManager = services.GetService(uiManagerType!);
-            if (uiManager == null) return false;
-
-            if (fileDialogManagerField == null)
+            object? fdm = null;
+            if (fileDialogManagerField != null)
             {
-                fileDialogManagerField = uiManagerType.GetField("FileDialogManager", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var uiManager = GetUIManager();
+                if (uiManager != null)
+                {
+                    fdm = fileDialogManagerField.GetValue(uiManager);
+                }
             }
 
-            if (fileDialogManagerField == null) return false;
-            var fdm = fileDialogManagerField.GetValue(uiManager);
             if (fdm == null) return false;
 
-            // In FileDialogManager, find dialog field
             var dialogField = fdm.GetType().GetField("dialog", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (dialogField == null) return false;
             var dialog = dialogField.GetValue(fdm);
@@ -369,19 +542,17 @@ public static class BrioReflectionHelper
 
             var dialogType = dialog.GetType();
 
-            // Try methods: GetFilePathName(), GetFilePathNameWithExt(), GetSelected()
             var getFilePathNameMethod = dialogType.GetMethod("GetFilePathName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (getFilePathNameMethod != null)
             {
                 var res = getFilePathNameMethod.Invoke(dialog, null) as string;
-                if (!string.IsNullOrEmpty(res) && res.EndsWith(".pose", StringComparison.OrdinalIgnoreCase) && File.Exists(res))
+                if (!string.IsNullOrEmpty(res) && IsSupportedPoseFile(res) && File.Exists(res))
                 {
                     path = res;
                     return true;
                 }
             }
 
-            // Try properties / fields: CurrentPath + SelectedFileName / fileNameBuffer
             string? currentDir = null;
             var getCurrentPathMethod = dialogType.GetMethod("GetCurrentPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (getCurrentPathMethod != null)
@@ -390,11 +561,23 @@ public static class BrioReflectionHelper
             }
             if (string.IsNullOrEmpty(currentDir))
             {
-                var curPathProp = dialogType.GetProperty("CurrentPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) ??
-                                  dialogType.GetProperty("Path", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (curPathProp != null)
+                currentDir = dialogType.GetField("CurrentPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(dialog) as string ??
+                             dialogType.GetProperty("CurrentPath", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(dialog) as string ??
+                             dialogType.GetProperty("Path", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(dialog) as string;
+            }
+
+            var getSelectedMethod = dialogType.GetMethod("GetSelected", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (getSelectedMethod != null)
+            {
+                var res = getSelectedMethod.Invoke(dialog, null) as string;
+                if (!string.IsNullOrEmpty(res) && !string.IsNullOrEmpty(currentDir))
                 {
-                    currentDir = curPathProp.GetValue(dialog) as string;
+                    var combined = Path.Combine(currentDir, res);
+                    if (IsSupportedPoseFile(combined) && File.Exists(combined))
+                    {
+                        path = combined;
+                        return true;
+                    }
                 }
             }
 
@@ -417,7 +600,7 @@ public static class BrioReflectionHelper
                 }
             }
 
-            if (!string.IsNullOrEmpty(selectedFile) && selectedFile.EndsWith(".pose", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(selectedFile) && IsSupportedPoseFile(selectedFile))
             {
                 if (!string.IsNullOrEmpty(currentDir))
                 {
@@ -444,7 +627,7 @@ public static class BrioReflectionHelper
                 if (filesObj is IEnumerable<string> list && list.Any())
                 {
                     var first = list.First();
-                    if (!string.IsNullOrEmpty(first) && first.EndsWith(".pose", StringComparison.OrdinalIgnoreCase) && File.Exists(first))
+                    if (!string.IsNullOrEmpty(first) && IsSupportedPoseFile(first) && File.Exists(first))
                     {
                         path = first;
                         return true;
@@ -458,7 +641,7 @@ public static class BrioReflectionHelper
                 if (f.FieldType == typeof(string))
                 {
                     var val = f.GetValue(dialog) as string;
-                    if (!string.IsNullOrEmpty(val) && val.EndsWith(".pose", StringComparison.OrdinalIgnoreCase) && File.Exists(val))
+                    if (!string.IsNullOrEmpty(val) && IsSupportedPoseFile(val) && File.Exists(val))
                     {
                         path = val;
                         return true;
